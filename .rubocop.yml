@@ -1,0 +1,9 @@
+AllCops:
+  TargetRubyVersion: 2.6
+  NewCops: enable
+
+# TODO: 项目稳定后再逐步收紧风格规则，初期保持宽松
+Style/Documentation:
+  Enabled: false
+Style/StringLiterals:
+  EnforcedStyle: double_quotes
