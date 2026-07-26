@@ -12,7 +12,7 @@ require_relative "version"
 # 加载顺序按依赖方向上游在前，避免循环依赖。
 module NetworkInfraUtility
   # 支撑层：无外部依赖的基础工具，最先加载
-  # require_relative "support/xxx"
+  require_relative "support/basic/ip"
 
   # 工具层：依赖 support
   # require_relative "tool/xxx"

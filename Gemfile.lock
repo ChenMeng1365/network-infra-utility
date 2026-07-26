@@ -1,0 +1,60 @@
+PATH
+  remote: .
+  specs:
+    network-infra-utility (0.2.0)
+      puma (~> 6.0)
+      rackup (~> 2.0)
+      roda (~> 3.0)
+
+GEM
+  remote: https://rubygems.org/
+  specs:
+    diff-lcs (1.6.2)
+    nio4r (2.7.5)
+    puma (6.6.1)
+      nio4r (~> 2.0)
+    rack (3.2.6)
+    rackup (2.3.1)
+      rack (>= 3)
+    rake (13.3.1)
+    roda (3.105.0)
+      rack
+    rspec (3.13.2)
+      rspec-core (~> 3.13.0)
+      rspec-expectations (~> 3.13.0)
+      rspec-mocks (~> 3.13.0)
+    rspec-core (3.13.6)
+      rspec-support (~> 3.13.0)
+    rspec-expectations (3.13.5)
+      diff-lcs (>= 1.2.0, < 2.0)
+      rspec-support (~> 3.13.0)
+    rspec-mocks (3.13.8)
+      diff-lcs (>= 1.2.0, < 2.0)
+      rspec-support (~> 3.13.0)
+    rspec-support (3.13.7)
+
+PLATFORMS
+  x64-mingw-ucrt
+
+DEPENDENCIES
+  network-infra-utility!
+  rake (~> 13.0)
+  rspec (~> 3.0)
+
+CHECKSUMS
+  diff-lcs (1.6.2)
+  network-infra-utility (0.2.0)
+  nio4r (2.7.5)
+  puma (6.6.1)
+  rack (3.2.6)
+  rackup (2.3.1)
+  rake (13.3.1)
+  roda (3.105.0)
+  rspec (3.13.2)
+  rspec-core (3.13.6)
+  rspec-expectations (3.13.5)
+  rspec-mocks (3.13.8)
+  rspec-support (3.13.7)
+
+BUNDLED WITH
+  4.0.10

@@ -1,0 +1,135 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+# coding: utf-8
+#
+# geo-get — network-infra-utility 的 IP 归属信息命令行查询工具
+#
+# 向运行中的 geo-api 服务发起查询，一次输入 IP，同时拉取 country / city /
+# asn 三类归属信息并汇总输出。默认展示文字，加 -j 则打印 JSON。
+#
+# 用法:
+#   geo-get 1.181.240.251              # 默认三接口齐查, 文字格式
+#   geo-get 8.8.8.8 -j                 # JSON 格式输出
+#   geo-get 8.8.8.8 --asn              # 仅查 asn, 文字
+#   geo-get 1.1.1.1 --country --json   # 仅查 country, JSON
+#
+# 选项:
+#   -t, --text         文字格式输出 (默认)
+#   -j, --json         JSON 格式输出
+#   --country          仅查询国家接口
+#   --city             仅查询城市接口
+#   --asn              仅查询 ASN 接口
+#   (不指定 --country/--city/--asn 时三接口齐查)
+#   -h, --help         显示帮助
+#   -v, --version      显示版本
+#
+# 默认连 http://127.0.0.1:9292 (geo-api 默认监听)。
+# 服务未运行时给出明确提示与启动命令。
+
+require "optparse"
+require "net/http"
+require "json"
+require "uri"
+
+HOST = "127.0.0.1"
+PORT = 9292
+BASE = "http://#{HOST}:#{PORT}"
+
+# ---- 命令行解析 -------------------------------------------------------------
+options = { format: :text, only: nil }
+parser = OptionParser.new do |opts|
+  opts.banner = <<~BAN
+    geo-get — IP 归属信息查询工具 (network-infra-utility)
+
+    用法:
+      geo-get <IP> [options]
+      geo-get                    # 查默认 IP 1.181.240.251, 三接口齐查, 文字
+      geo-get 8.8.8.8 -j         # JSON 格式
+      geo-get 8.8.8.8 --asn      # 仅查 asn
+
+    选项:
+  BAN
+  opts.on("-t", "--text", "文字格式输出 (默认)")      { options[:format] = :text }
+  opts.on("-j", "--json", "JSON 格式输出")            { options[:format] = :json }
+  opts.on("--country", "仅查询国家接口")              { options[:only] = :country }
+  opts.on("--city", "仅查询城市接口")                 { options[:only] = :city }
+  opts.on("--asn", "仅查询 ASN 接口")                 { options[:only] = :asn }
+  opts.on("-v", "--version", "显示版本") do
+    require_relative "../version"
+    puts "geo-get #{NetworkInfraUtility::VERSION}"
+    exit 0
+  end
+  opts.on("-h", "--help", "显示帮助") do
+    puts opts
+    exit 0
+  end
+end
+parser.parse!
+
+# 第一个非 -- 参数当 IP; 不给就用默认演示 IP
+ip = ARGV.find { |a| !a.start_with?("-") } || "1.181.240.251"
+
+only = options[:only]
+do_country = only.nil? || only == :country
+do_city    = only.nil? || only == :city
+do_asn     = only.nil? || only == :asn
+
+# ---- HTTP 取数 --------------------------------------------------------------
+# 发起一次 GET, 返回 {code:, body:}
+def fetch(base, path, params)
+  uri = URI("#{base}#{path}")
+  uri.query = URI.encode_www_form(params) unless params.empty?
+  res = Net::HTTP.get_response(uri)
+  { code: res.code.to_i, body: (JSON.parse(res.body) rescue res.body) }
+rescue Errno::ECONNREFUSED
+  abort "✗ 无法连接 #{base} —— geo-api 服务未启动。\n  启动命令: geo-api -d E:/workspace/momentum/twinklite/data/geodb"
+rescue => e
+  abort "✗ 请求失败: #{e.class}: #{e.message}"
+end
+
+# ---- 按接口拉取 + 收集 ------------------------------------------------------
+results = {}
+results[:country] = fetch(BASE, "/geo/country", addr: ip) if do_country
+results[:city]    = fetch(BASE, "/geo/city",    addr: ip) if do_city
+results[:asn]     = fetch(BASE, "/geo/asn",     addr: ip) if do_asn
+
+# ---- 输出: --json / --text 两路分发 -----------------------------------------
+case options[:format]
+when :json
+  # JSON 格式: 把每个接口的响应原样放进一个对象打印。
+  # 命中的接口放解析后的 body; 404/无结果放 null, 不逐条刷错误。
+  payload = {}
+  results.each do |key, r|
+    payload[key] = (r[:code] == 200 ? r[:body] : nil)
+  end
+  puts JSON.pretty_generate(payload)
+when :text
+  puts "查询 IP: #{ip}    范围: #{only ? "仅 #{only}" : 'country / city / asn 三接口齐查'}    服务: #{BASE}"
+  puts "-" * 60
+
+  hits = []
+  if do_country && (r = results[:country]) && r[:code] == 200
+    d = r[:body]
+    g = d["geoname"]; rc = d["registered_country"]
+    country = (g && g["country_name"]) || (rc && rc["country_name"]) || "未知"
+    hits << "[国家] #{country} (#{(g && g["country_iso_code"]) || (rc && rc["country_iso_code"])})  网段 #{d["network"]}"
+  end
+  if do_city && (r = results[:city]) && r[:code] == 200
+    d = r[:body]
+    g = d["geoname"]
+    city = (g && (g["city_namezh"] || g["city_name"])) || "未知"
+    coord = g && g["latitude"] && g["longitude"] ? "#{g["latitude"]}, #{g["longitude"]}" : "无"
+    hits << "[城市] #{city}    坐标 #{coord}    网段 #{d["network"]}"
+  end
+  if do_asn && (r = results[:asn]) && r[:code] == 200
+    d = r[:body]
+    hits << "[ASN]  AS#{d["autonomous_system_number"]} #{d["autonomous_system_organization"]}    网段 #{d["network"]}"
+  end
+
+  if hits.empty?
+    puts "#{ip} 未查到归属信息 (该 IP 不在已知数据范围内, 如回环/保留地址)"
+  else
+    puts "#{ip} 的归属信息:"
+    hits.each { |h| puts "  #{h}" }
+  end
+end

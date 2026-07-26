@@ -1,0 +1,114 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+# coding: utf-8
+#
+# geo-api — network-infra-utility 的 IP 归属信息查询命令行服务
+#
+# 把 service/geodb 的 GeoAPI 封装为可直接调用的命令行服务，默认监听
+# 0.0.0.0:9292，供本地或同网段主机通过 HTTP 查询 IP 归属信息
+# (asn / city / country 三个接口，详见 service/geodb/GeoAPI.md)。
+#
+# 用法:
+#   geo-api                              # 默认 ./geodb/ + 0.0.0.0:9292
+#   geo-api -d /data/ipdb                # 指定数据文件目录
+#   geo-api -p 8080                      # 指定端口
+#   geo-api -b 127.0.0.1 -p 9292 -d ./ipdb
+#   geo-api --server puma                # 指定 Rack 服务器
+#   GEODB_DATA_DIR=/data/ipdb geo-api    # 通过环境变量指定数据目录
+#
+# 选项:
+#   -d, --data-dir DIR   IP 数据文件目录，默认 ./geodb/
+#   -b, --host HOST      监听地址，默认 0.0.0.0
+#   -p, --port PORT      监听端口，默认 9292
+#   -s, --server NAME    Rack 服务器，默认 puma
+#   -h, --help           显示帮助
+#   -v, --version        显示版本
+#
+# 数据目录说明:
+#   目录下应至少存在 geoapi 期望的 JSON 文件之一 (asn.json / city-IPv4.json /
+#   country-IPv4.json / country-IPv6.json / city-IPv6.json / geo-city.json /
+#   geo-country.json)。目录不存在或没有任何 *.json 文件将直接报错退出。
+#   查询时若具体文件缺失，对应接口容错返回 404 无结果，不影响其他接口。
+
+require "optparse"
+require "rackup"
+
+# 找到 gem 自身根目录 (本文件在 <root>/bin/geo-api)
+ROOT = File.expand_path("..", __dir__)
+$LOAD_PATH.unshift File.join(ROOT, "service", "geodb")
+
+# 命令行默认值
+options = {
+  data_dir: nil,
+  host: "0.0.0.0",
+  port: 9292,
+  server: "puma"
+}
+
+parser = OptionParser.new do |opts|
+  opts.banner = <<~BAN
+    geo-api — IP 归属信息查询服务 (network-infra-utility)
+
+    用法:
+      geo-api [options]
+      GEODB_DATA_DIR=/data/ipdb geo-api
+
+    选项:
+  BAN
+  opts.on("-d", "--data-dir DIR", "IP 数据文件目录，默认 ./geodb/") { |v| options[:data_dir] = v }
+  opts.on("-b", "--host HOST", "监听地址，默认 0.0.0.0") { |v| options[:host] = v }
+  opts.on("-p", "--port PORT", Integer, "监听端口，默认 9292") { |v| options[:port] = v }
+  opts.on("-s", "--server NAME", "Rack 服务器，默认 puma") { |v| options[:server] = v }
+  opts.on("-v", "--version", "显示版本") do
+    require_relative "../version"
+    puts "geo-api #{NetworkInfraUtility::VERSION}"
+    exit 0
+  end
+  opts.on("-h", "--help", "显示帮助") do
+    puts opts
+    exit 0
+  end
+end
+parser.parse!
+
+# 数据目录: 命令行 > 环境变量 > 默认 ./geodb
+data_dir = options[:data_dir] || ENV["GEODB_DATA_DIR"] || "geodb"
+data_dir = File.expand_path(data_dir)
+ENV["GEODB_DATA_DIR"] = data_dir
+
+# ---- 启动前校验数据目录 ---------------------------------------------------
+# 目录不存在直接报错退出；目录存在但没有任何 *.json 也视为错误。
+unless File.directory?(data_dir)
+  warn "✗ 数据目录不存在: #{data_dir}"
+  warn "  请用 -d/--data-dir 指定正确的数据文件目录，或在该位置创建 geodb/ 目录。"
+  warn "  期望目录结构: #{data_dir}/ 下含 asn.json / city-IPv4.json /"
+  warn "                country-IPv4.json / geo-city.json 等 JSON 数据文件。"
+  exit 1
+end
+
+json_files = Dir.glob(File.join(data_dir, "*.json"))
+if json_files.empty?
+  warn "✗ 数据目录 #{data_dir} 下没有任何 JSON 数据文件。"
+  warn "  请先将 GeoLite2 CSV 数据通过 service/geodb/geodb.rb 生成为 JSON，"
+  warn "  或用 -d/--data-dir 指向已生成 JSON 的目录。"
+  exit 1
+end
+
+require_relative "../version"
+puts "╭─ geo-api #{NetworkInfraUtility::VERSION} ───────────────────────────────"
+puts "│ 数据目录: #{data_dir} "
+puts "│ #{json_files.length}个数据文件：#{json_files.map { |f| File.basename(f) }.join(' ')}"
+puts "│ 监听: http://#{options[:host]}:#{options[:port]}"
+puts "│ 服务: #{options[:server]}"
+puts "╰─ Ctrl+C 退出 ─────────────────────────────────────"
+$stdout.flush
+
+# ---- 启动服务 -------------------------------------------------------------
+require "api"   # 即 service/geodb/api.rb
+
+Rackup::Server.start(
+  app:    GeoAPI.app,
+  server: options[:server],
+  Host:   options[:host],
+  Port:   options[:port]
+)

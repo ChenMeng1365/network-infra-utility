@@ -1,0 +1,190 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+# coding: utf-8
+#
+# geo-load — network-infra-utility 的 GeoLite2 CSV → JSON 转换命令行工具
+#
+# 把 GeoLite2 解压后的 CSV 目录转换为 geo-api 可用的 JSON 数据文件。
+# 一次调用依次执行 load_asn / load_city / load_country，生成 7 个 JSON:
+#   asn.json / city-IPv4.json / city-IPv6.json
+#   country-IPv4.json / country-IPv6.json / geo-city.json / geo-country.json
+#
+# 用法:
+#   geo-load                                            # 当前目录找 CSV, 输出到 ./geodb/
+#   geo-load /data/GeoLite2-CSV                         # 指定 CSV 目录
+#   geo-load /data/GeoLite2-CSV /var/lib/geodb          # 指定输入+输出
+#
+# 参数规则:
+#   geo-load [RAW_DIR] [DOC_DIR]
+#
+#   RAW_DIR (第一个参数, 可省):
+#     不写 → 在当前工作目录下查找 GeoLite2 CSV 目录, 找不到报错
+#     写了 → 用指定路径; 路径不存在报错
+#
+#   DOC_DIR (第二个参数, 可省):
+#     不写 → 默认在当前工作目录下生成 geodb/ 子目录
+#     写了 → 用指定路径; 路径不存在则自动创建, 创建不了报错
+#
+# 选项:
+#   --asn-only          仅转换 ASN 数据
+#   --city-only         仅转换 City 数据
+#   --country-only      仅转换 Country 数据
+#   (不指定时三类全转)
+#   -h, --help          显示帮助
+#   -v, --version       显示版本
+
+require "optparse"
+
+# ---- 命令行解析 -------------------------------------------------------------
+options = { only: nil }
+parser = OptionParser.new do |opts|
+  opts.banner = <<~BAN
+    geo-load — GeoLite2 CSV → JSON 转换工具 (network-infra-utility)
+
+    用法:
+      geo-load [RAW_DIR] [DOC_DIR]
+      geo-load                            # 当前目录找 CSV, 输出到 ./geodb/
+      geo-load /data/GeoLite2-CSV         # 指定 CSV 目录
+      geo-load /data/GeoLite2-CSV /opt/geodb
+
+    参数:
+      RAW_DIR  GeoLite2 CSV 目录 (可省, 省则在当前目录查找)
+      DOC_DIR  JSON 输出目录 (可省, 省则输出到 ./geodb/)
+
+    选项:
+  BAN
+  opts.on("--asn-only", "仅转换 ASN 数据")     { options[:only] = :asn }
+  opts.on("--city-only", "仅转换 City 数据")    { options[:only] = :city }
+  opts.on("--country-only", "仅转换 Country 数据") { options[:only] = :country }
+  opts.on("-v", "--version", "显示版本") do
+    require_relative "../version"
+    puts "geo-load #{NetworkInfraUtility::VERSION}"
+    exit 0
+  end
+  opts.on("-h", "--help", "显示帮助") do
+    puts opts
+    exit 0
+  end
+end
+parser.parse!
+
+# 取位置参数: 第一个非 -- 参数是 RAW_DIR, 第二个是 DOC_DIR
+positional = ARGV.reject { |a| a.start_with?("-") }
+raw_arg = positional[0]
+doc_arg = positional[1]
+
+# ---- 确定 RAW_DIR (输入目录) ------------------------------------------------
+# GeoLite2 解压后的 CSV 目录特征: 含 GeoLite2-ASN-CSV_* / GeoLite2-City-CSV_* /
+# GeoLite2-Country-CSV_* 子目录, 或本身就是这些子目录之一。
+GEO_PATTERN = /GeoLite2-(ASN|City|Country)-CSV/i
+
+if raw_arg
+  # 用户显式指定了 RAW_DIR
+  raw_dir = File.expand_path(raw_arg)
+  unless File.directory?(raw_dir)
+    abort "✗ 输入目录不存在: #{raw_dir}\n  请指定有效的 GeoLite2 CSV 解压目录。"
+  end
+else
+  # 没指定 → 在当前工作目录下查找
+  cwd = Dir.pwd
+  # 先看当前目录本身是否符合
+  candidates = []
+  if cwd =~ GEO_PATTERN || Dir.glob(File.join(cwd, "GeoLite2-*-CSV_*")).any?
+    candidates << cwd
+  end
+  # 再看子目录
+  Dir.glob(File.join(cwd, "*")).each do |p|
+    candidates << p if File.directory?(p) && (p =~ GEO_PATTERN || Dir.glob(File.join(p, "GeoLite2-*-CSV_*")).any?)
+  end
+  # 也看下一层 (常见: cwd/GeoLite2-CSV_xxx/GeoLite2-ASN-CSV_xxx/)
+  Dir.glob(File.join(cwd, "*", "*")).each do |p|
+    candidates << p if File.directory?(p) && p =~ GEO_PATTERN
+  end
+
+  if candidates.empty?
+    abort <<~MSG
+      ✗ 在当前目录下未找到 GeoLite2 CSV 数据:
+        #{cwd}
+      请将 GeoLite2 CSV 解压到当前目录, 或显式指定路径:
+        geo-load /path/to/GeoLite2-CSV [DOC_DIR]
+      期望的目录结构:
+        GeoLite2-ASN-CSV_*/  GeoLite2-City-CSV_*/  GeoLite2-Country-CSV_*/
+    MSG
+  end
+
+  # 去重, 取包含最多 CSV 类型的目录 (优先选父目录)
+  raw_dir = candidates.uniq.max_by { |d| Dir.glob(File.join(d, "**", "*.csv")).length }
+end
+
+# ---- 确定 DOC_DIR (输出目录) ------------------------------------------------
+if doc_arg
+  doc_dir = File.expand_path(doc_arg)
+  # 指定了路径: 不存在则创建, 创建不了报错
+  unless File.directory?(doc_dir)
+    begin
+      require "fileutils"
+      FileUtils.mkdir_p(doc_dir)
+    rescue SystemCallError => e
+      abort "✗ 无法创建输出目录 #{doc_dir}: #{e.message}"
+    end
+  end
+else
+  # 没指定 → 默认在当前工作目录下生成 geodb/
+  doc_dir = File.expand_path("geodb", Dir.pwd)
+  begin
+    require "fileutils"
+    FileUtils.mkdir_p(doc_dir)
+  rescue SystemCallError => e
+    abort "✗ 无法创建输出目录 #{doc_dir}: #{e.message}"
+  end
+end
+
+# ---- 加载 GeoDB 模块 --------------------------------------------------------
+# geodb.rb 依赖 cc + network + CC.use, 需要把 service/geodb 加入加载路径
+ROOT = File.expand_path("..", __dir__)
+$LOAD_PATH.unshift File.join(ROOT, "service", "geodb")
+
+require "cc"
+require "network"
+CC.use "file", "enum", "shell-tools"
+require "geodb"
+
+# ---- 执行转换 ---------------------------------------------------------------
+do_asn     = options[:only].nil? || options[:only] == :asn
+do_city    = options[:only].nil? || options[:only] == :city
+do_country = options[:only].nil? || options[:only] == :country
+
+puts "╭─ geo-load #{NetworkInfraUtility::VERSION} ───────────────────────────────"
+puts "│ 输入目录: #{raw_dir}"
+puts "│ 输出目录: #{doc_dir}"
+puts "│ 转换范围: #{options[:only] ? "仅 #{options[:only]}" : 'asn / city / country 全量'}"
+puts "╰─ 开始转换 ─────────────────────────────────────"
+$stdout.flush
+
+# GeoDB 的三个方法用 Dir[glob] 匹配 CSV, 路径模式相对于调用目录
+# 把 raw_dir + glob 拼成绝对路径模式
+asn_pattern    = File.join(raw_dir, "**", "GeoLite2-ASN-CSV_*", "*.csv")
+city_pattern   = File.join(raw_dir, "**", "GeoLite2-City-CSV_*", "*.csv")
+country_pattern = File.join(raw_dir, "**", "GeoLite2-Country-CSV_*", "*.csv")
+
+# out_path 需要以 / 结尾 (geodb.rb 里拼 "#{out_path}asn.json")
+out_path = doc_dir.end_with?("/", "\\") ? doc_dir : doc_dir + "/"
+
+if do_asn
+  puts "--- ASN ---"
+  GeoDB.load_asn(asn_pattern, out_path)
+end
+if do_city
+  puts "--- City ---"
+  GeoDB.load_city(city_pattern, out_path)
+end
+if do_country
+  puts "--- Country ---"
+  GeoDB.load_country(country_pattern, out_path)
+end
+
+puts "╭─ 完成 ───────────────────────────────────────"
+puts "│ JSON 文件已生成到: #{doc_dir}"
+puts "│ 文件列表:"
+Dir.glob(File.join(doc_dir, "*.json")).each { |f| puts "│   #{File.basename(f)}" }
+puts "╰─ 可用 geo-api -d #{doc_dir} 启动查询服务 ────"

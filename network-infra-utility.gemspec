@@ -21,7 +21,14 @@ Gem::Specification.new do |spec|
   spec.files = Dir.chdir(File.expand_path(__dir__)) do
     `git ls-files -z`.split("\x0").reject { |f| f.match(%r{\A(?:test|spec|features|example)/}) }
   end
-  spec.bindir       = "exe"
-  spec.executables  = spec.files.grep(%r{\Aexe/}) { |f| File.basename(f) }
+  # bin/ 既放对外命令 (geo-api) 也放开发脚本 (console/setup)，
+  # executables 显式声明，避免把开发脚本当作系统命令安装到用户 PATH。
+  spec.bindir       = "bin"
+  spec.executables  = %w[geo-api geo-get geo-load]
   spec.require_paths = ["document", "service", "support", "tool", "."]
+
+  # geo-api 命令行服务依赖的运行时 gem
+  spec.add_runtime_dependency "roda", "~> 3.0"
+  spec.add_runtime_dependency "rackup", "~> 2.0"
+  spec.add_runtime_dependency "puma", "~> 6.0"
 end
