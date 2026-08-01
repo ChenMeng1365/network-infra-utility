@@ -13,6 +13,7 @@ require_relative "version"
 module NetworkInfraUtility
   # 支撑层：无外部依赖的基础工具，最先加载
   require_relative "support/basic/ip"
+  require_relative "support/basic/as_num"
 
   # 工具层：依赖 support
   # require_relative "tool/xxx"
