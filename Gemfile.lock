@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    network-infra-utility (0.3.0)
+    network-infra-utility (0.3.1)
       puma (~> 6.0)
       rackup (~> 2.0)
       roda (~> 3.0)
@@ -43,7 +43,7 @@ DEPENDENCIES
 
 CHECKSUMS
   diff-lcs (1.6.2)
-  network-infra-utility (0.3.0)
+  network-infra-utility (0.3.1)
   nio4r (2.7.5)
   puma (6.6.1)
   rack (3.2.6)
