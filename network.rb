@@ -20,7 +20,7 @@ module NetworkInfraUtility
   # require_relative "tool/xxx"
 
   # 服务层：依赖 tool / support
-  # require_relative "service/xxx"
+  # require_relative "service/ssh/lib/network_infra_utility/ssh"
 
   # 文档层：依赖 service / tool，最后加载
   # require_relative "document/xxx"

@@ -55,3 +55,20 @@ build-iPhoneSimulator/
 
 # Used by RuboCop. Remote config files pulled in from inherit_from directive.
 # .rubocop-https?--*
+
+## Erlang/OTP build artifacts:
+*.beam
+*.appup
+erl_crash.dump
+/ebin/
+/.eunit/
+
+## rebar3 build:
+.rebar3/
+/_build/
+/rebar3.crashdump
+
+## erlang.mk build:
+.erlang.mk/
+/deps/
+/_rel/

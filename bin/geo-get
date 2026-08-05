@@ -82,7 +82,7 @@ def fetch(base, path, params)
   res = Net::HTTP.get_response(uri)
   { code: res.code.to_i, body: (JSON.parse(res.body) rescue res.body) }
 rescue Errno::ECONNREFUSED
-  abort "✗ 无法连接 #{base} —— geo-api 服务未启动。\n  启动命令: geo-api -d E:/workspace/momentum/twinklite/data/geodb"
+  abort "✗ 无法连接 #{base} —— geo-api 服务未启动。\n  启动命令: geo-api -d ./geodb"
 rescue => e
   abort "✗ 请求失败: #{e.class}: #{e.message}"
 end

@@ -1,0 +1,135 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+# coding: utf-8
+#
+# geo-doc — network-infra-utility 的 GeoLite2 JSON → 大表导出工具
+#
+# 把 geo-load 生成的 JSON 数据文件（city-IPv4/IPv6、country-IPv4/IPv6、
+# asn、geo-city、geo-country）拼接成一张完整大表，按 IPv4 / IPv6 分别
+# 输出为 CSV 和/或 TXT 文件。
+#
+# 用法:
+#   geo-doc                                  # 从 ./geodb/ 读取, 输出到 ./geodb/
+#   geo-doc -d /data/geodb                   # 指定数据目录
+#   geo-doc -d /data/geodb -o /output        # 指定数据目录 + 输出目录
+#   geo-doc -d /data/geodb --format csv      # 仅输出 CSV
+#   geo-doc -d /data/geodb --format txt      # 仅输出 TXT
+#   geo-doc -d /data/geodb -o /out -f csv    # 指定输出目录 + 仅 CSV
+#
+# 参数规则:
+#   -d, --data-dir DIR     数据文件目录（含 JSON），默认 ./geodb/
+#   -o, --output-dir DIR   输出目录，默认与数据目录相同
+#   -f, --format FORMAT    输出格式: csv / txt / both（默认 both）
+#   -h, --help             显示帮助
+#   -v, --version          显示版本
+
+require "optparse"
+
+# ---- 命令行解析 -------------------------------------------------------------
+options = { data_dir: nil, output_dir: nil, format: :both }
+parser = OptionParser.new do |opts|
+  opts.banner = <<~BAN
+    geo-doc — GeoLite2 JSON → 大表导出工具 (network-infra-utility)
+
+    将 geo-load 生成的 JSON 拼接为完整 IP 归属大表，按 IPv4/IPv6 分别输出。
+
+    用法:
+      geo-doc                              # 从 ./geodb/ 读取并输出
+      geo-doc -d /data/geodb               # 指定数据目录
+      geo-doc -d /data/geodb -o /output    # 指定数据目录 + 输出目录
+      geo-doc -d /data/geodb -f csv        # 仅输出 CSV
+      geo-doc -d /data/geodb -f txt        # 仅输出 TXT
+
+    参数:
+      -d, --data-dir DIR     数据文件目录 (含 JSON)，默认 ./geodb/
+      -o, --output-dir DIR   输出目录，默认与数据目录相同
+      -f, --format FORMAT    输出格式: csv / txt / both (默认 both)
+
+    选项:
+  BAN
+  opts.on("-d", "--data-dir DIR", "数据文件目录，默认 ./geodb/") { |v| options[:data_dir] = v }
+  opts.on("-o", "--output-dir DIR", "输出目录，默认与数据目录相同") { |v| options[:output_dir] = v }
+  opts.on("-f", "--format FORMAT", %w[csv txt both], "输出格式: csv / txt / both (默认 both)") { |v| options[:format] = v.to_sym }
+  opts.on("-v", "--version", "显示版本") do
+    require_relative "../version"
+    puts "geo-doc #{NetworkInfraUtility::VERSION}"
+    exit 0
+  end
+  opts.on("-h", "--help", "显示帮助") do
+    puts opts
+    exit 0
+  end
+end
+parser.parse!
+
+# ---- 确定数据目录 -----------------------------------------------------------
+data_dir = options[:data_dir] || ENV["GEODB_DATA_DIR"] || "geodb"
+data_dir = File.expand_path(data_dir)
+
+unless File.directory?(data_dir)
+  warn "✗ 数据目录不存在: #{data_dir}"
+  warn "  请用 -d/--data-dir 指定包含 JSON 数据文件的目录。"
+  warn "  期望目录下含: asn.json / city-IPv4.json / city-IPv6.json /"
+  warn "               country-IPv4.json / country-IPv6.json /"
+  warn "               geo-city.json / geo-country.json"
+  exit 1
+end
+
+required = %w[asn.json geo-city.json geo-country.json]
+missing = required.reject { |f| File.exist?(File.join(data_dir, f)) }
+unless missing.empty?
+  warn "✗ 数据目录 #{data_dir} 缺少必要文件: #{missing.join(', ')}"
+  warn "  请先运行 geo-load 生成 JSON 数据文件。"
+  exit 1
+end
+
+# ---- 确定输出目录 -----------------------------------------------------------
+if options[:output_dir]
+  output_dir = File.expand_path(options[:output_dir])
+  unless File.directory?(output_dir)
+    begin
+      require "fileutils"
+      FileUtils.mkdir_p(output_dir)
+    rescue SystemCallError => e
+      abort "✗ 无法创建输出目录 #{output_dir}: #{e.message}"
+    end
+  end
+else
+  output_dir = nil  # nil → 与数据目录相同
+end
+
+# ---- 解析 format 参数 -------------------------------------------------------
+case options[:format]
+when :csv  then format = [:csv]
+when :txt  then format = [:txt]
+when :both then format = [:csv, :txt]
+else
+  abort "✗ 不支持的格式: #{options[:format]} (可选: csv / txt / both)"
+end
+
+# ---- 加载 GeoDB 模块 --------------------------------------------------------
+ROOT = File.expand_path("..", __dir__)
+$LOAD_PATH.unshift File.join(ROOT, "service", "geodb")
+
+require "cc"
+require "network"
+CC.use "file", "enum", "shell-tools"
+require "geodb"
+
+# ---- 执行导出 ---------------------------------------------------------------
+require_relative "../version"
+puts "╭─ geo-doc #{NetworkInfraUtility::VERSION} ───────────────────────────────"
+puts "│ 数据目录: #{data_dir}"
+puts "│ 输出目录: #{output_dir || data_dir}"
+puts "│ 输出格式: #{format.join(' + ')}"
+puts "╰─ 开始导出 ─────────────────────────────────────"
+$stdout.flush
+
+GeoDB.output(data_dir + "/", format: format, output_path: output_dir ? output_dir + "/" : nil)
+
+puts "╭─ 完成 ───────────────────────────────────────"
+out_target = output_dir || data_dir
+puts "│ 大表文件已生成到: #{out_target}"
+puts "│ 文件列表:"
+Dir.glob(File.join(out_target, "output-*.{csv,txt}")).each { |f| puts "│   #{File.basename(f)}" }
+puts "╰─ 可用 geo-get 查询单个 IP 归属信息 ──────────"
