@@ -25,7 +25,7 @@ Gem::Specification.new do |spec|
   # executables 显式声明，避免把开发脚本当作系统命令安装到用户 PATH。
   spec.bindir       = "bin"
   spec.executables  = %w[geo-api geo-get geo-load geo-doc]
-  spec.require_paths = ["document", "service", "support", "tool", "."]
+  spec.require_paths = ["document", "service", "service/ssh/lib", "support", "tool", "."]
 
   # geo-api 命令行服务依赖的运行时 gem
   spec.add_runtime_dependency "roda", "~> 3.0"

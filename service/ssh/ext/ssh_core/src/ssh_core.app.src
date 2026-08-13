@@ -1,0 +1,36 @@
+{application, ssh_core, [
+    {description, "SSH Core Engine - Erlang/OTP ssh application wrapper"},
+    {vsn, "1.0.0"},
+    {registered, [ssh_core_sup]},
+    {mod, {ssh_core_app, []}},
+    {applications, [
+        kernel,
+        stdlib,
+        ssh,
+        public_key,
+        crypto,
+        inets
+    ]},
+    {env, []},
+    {modules, [
+        ssh_core_app,
+        ssh_core_sup,
+        ssh_infra_sup,
+        ssh_conn_sup,
+        ssh_sftp_sup,
+        ssh_ipc_gateway,
+        ssh_ipc_proto,
+        ssh_ipc_coalesce,
+        ssh_codec,
+        ssh_conn_worker,
+        ssh_channel_stm,
+        ssh_auth_engine,
+        ssh_jump_chain,
+        ssh_port_fwd,
+        ssh_sftp_session,
+        ssh_keepalive_mgr,
+        ssh_known_hosts_proxy
+    ]},
+    {licenses, ["AGPL-3.0-or-later"]},
+    {links, []}
+]}.

@@ -1,0 +1,198 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "thor"
+require_relative "../lib/network_infra_utility/ssh/client"
+
+module NetworkInfraUtility
+  module SSH
+    # CLI 入口，Thor 命令行框架。
+    # V1.0：简单读-发-收交互模式
+    # V2.0：升级为 curses 多面板 TUI
+    class CLI < Thor
+      desc "connect HOST", "连接到 SSH 服务器"
+      option :user, aliases: "-u", required: true, desc: "用户名"
+      option :port, aliases: "-p", type: :numeric, default: 22, desc: "端口"
+      option :key, aliases: "-i", desc: "私钥文件路径"
+      option :jump, aliases: "-J", desc: "跳板机 (user@host:port)"
+      option :name, desc: "会话名称"
+      option :password, type: :boolean, desc: "使用密码认证（交互输入）"
+      option :theme, desc: "终端配色主题"
+      option :connect_timeout, type: :numeric, desc: "连接超时（秒），默认60"
+      option :keepalive_interval, type: :numeric, desc: "保活心跳间隔（秒），默认30，设0禁用"
+      option :algorithms, type: :string, desc: "自定义算法，格式: kex=algo1,algo2;cipher=aes256-ctr"
+
+      def connect(host)
+        client = Client.new
+        client.start_engine
+
+        spec = {
+          host: host,
+          port: options[:port],
+          user: options[:user],
+          name: options[:name]
+        }
+        spec[:key_path] = options[:key] if options[:key]
+        spec[:jumps] = parse_jumps(options[:jump]) if options[:jump]
+
+        if options[:password]
+          spec[:auth] = { type: "password", password: ask_password }
+        end
+
+        spec[:terminal] = { theme: options[:theme] } if options[:theme]
+
+        # 场景2: 可配置连接超时
+        spec[:connect_timeout_ms] = options[:connect_timeout] * 1000 if options[:connect_timeout]
+
+        # 场景3: 可配置保活间隔
+        if options[:keepalive_interval]
+          if options[:keepalive_interval] > 0
+            client.ipc.call("keepalive.set_interval", { interval_ms: options[:keepalive_interval] * 1000 })
+          end
+        end
+
+        # 场景1: 自定义算法
+        spec[:algorithms] = parse_algorithms(options[:algorithms]) if options[:algorithms]
+
+        session = client.connect(spec)
+        terminal = session.open_terminal(theme: options[:theme])
+
+        say "Connected to #{options[:user]}@#{host}:#{options[:port]}", :green
+        say "Type 'exit' to disconnect.", :cyan
+        say ""
+
+        start_interactive(session, terminal)
+      rescue => e
+        warn "Error: #{e.message}"
+        exit 1
+      ensure
+        client&.stop
+      end
+
+      desc "batch FILE", "批量在多个会话上执行命令"
+      option :command, aliases: "-c", required: true, desc: "要执行的命令"
+      option :serial, type: :boolean, default: false, desc: "串行执行（默认并行）"
+
+      def batch(file)
+        sessions_spec = load_sessions_from_file(file)
+
+        client = Client.new
+        client.start_engine
+
+        sessions = sessions_spec.map do |spec|
+          session = client.connect(spec)
+          session.open_terminal
+          session
+        end
+
+        say "Executing '#{options[:command]}' on #{sessions.size} sessions...", :cyan
+
+        if options[:serial]
+          sessions.each do |session|
+            say "[#{session.name}] ", :yellow
+            session.terminal.send("#{options[:command]}\r")
+            sleep 2
+          end
+        else
+          threads = sessions.map do |session|
+            Thread.new do
+              session.terminal.send("#{options[:command]}\r")
+            end
+          end
+          threads.each(&:join)
+          sleep 2
+        end
+
+        say "Done.", :green
+      rescue => e
+        warn "Error: #{e.message}"
+        exit 1
+      ensure
+        client&.stop
+      end
+
+      desc "version", "显示版本信息"
+      def version
+        puts NetworkInfraUtility::SSH::VERSION
+      end
+
+      desc "themes", "列出自带配色主题"
+      def themes
+        Terminal::Theme.builtin_names.each { |name| puts "  #{name}" }
+      end
+
+      private
+
+      # V1.0：简单的读-发-收循环
+      # V2.0：升级为 curses 多面板 TUI
+      def start_interactive(session, terminal)
+        loop do
+          line = $stdin.gets
+          break if line.nil? || line.chomp == "exit"
+
+          if line.chomp == "quit"
+            break
+          end
+
+          terminal.puts(line.chomp)
+        end
+      rescue Interrupt
+        # Ctrl+C 退出
+        nil
+      end
+
+      # 解析跳板机参数
+      # @param jump_str [String] "user@host:port,user2@host2:port2"
+      # @return [Array<Hash>] [{user:, host:, port:}, ...]
+      def parse_jumps(jump_str)
+        jump_str.split(",").map do |j|
+          if j =~ /\A([^@]+)@([^:]+):(\d+)\z/
+            { user: Regexp.last_match(1), host: Regexp.last_match(2), port: Regexp.last_match(3).to_i }
+          else
+            raise "Invalid jump format: #{j} (expected user@host:port)"
+          end
+        end
+      end
+
+      # 交互式密码输入（不回显）
+      def ask_password
+        print "Password: "
+        system("stty -echo") if $stdin.tty?
+        password = $stdin.gets&.chomp
+      ensure
+        system("stty echo") if $stdin.tty?
+        puts
+      end
+
+      # 从文件加载会话列表
+      # @param file [String] YAML 文件路径
+      # @return [Array<Hash>]
+      def load_sessions_from_file(file)
+        require "yaml"
+
+        data = YAML.safe_load(File.read(file), symbolize_names: true)
+        raise "Invalid session file format" unless data.is_a?(Array) || data.is_a?(Hash)
+
+        data.is_a?(Hash) ? [data] : data
+      end
+
+      # 解析算法自定义参数
+      # 格式: kex=curve25519-sha256,diffie-hellman-group14-sha256;cipher=aes256-ctr
+      # @param str [String]
+      # @return [Hash] { kex: [...], cipher: [...], ... }
+      def parse_algorithms(str)
+        str.split(";").each_with_object({}) do |pair, result|
+          key, vals = pair.split("=", 2)
+          raise "Invalid algorithms format: #{pair}" unless vals
+
+          result[key.strip.to_sym] = vals.split(",").map(&:strip)
+        end
+      end
+    end
+  end
+end
+
+require_relative "../lib/network_infra_utility/ssh/version"
+require_relative "../lib/network_infra_utility/ssh/terminal/theme"
+
+NetworkInfraUtility::SSH::CLI.start(ARGV)

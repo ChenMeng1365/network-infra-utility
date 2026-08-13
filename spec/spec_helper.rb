@@ -13,3 +13,6 @@ require "bundler/setup"
 #   require "support/yyy"
 #
 # require_paths 已由 Bundler.setup 注入 $LOAD_PATH，无需手动 add_path。
+
+# SSH 模块位于 service/ssh/lib 下，需要手动 require
+require_relative "../service/ssh/lib/network_infra_utility/ssh"

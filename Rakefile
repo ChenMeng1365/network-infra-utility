@@ -8,7 +8,7 @@ RSpec::Core::RakeTask.new(:spec)
 
 # 功能场景用例
 RSpec::Core::RakeTask.new(:example) do |t|
-  t.pattern = "example/**/*_spec.rb"
+  t.pattern = "example/**/*_example.rb"
 end
 
 task default: %i[spec example]

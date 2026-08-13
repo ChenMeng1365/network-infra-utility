@@ -66,9 +66,13 @@ erl_crash.dump
 ## rebar3 build:
 .rebar3/
 /_build/
+**/_build/
 /rebar3.crashdump
 
 ## erlang.mk build:
 .erlang.mk/
 /deps/
 /_rel/
+
+## Rust / Cargo build artifacts:
+target/
