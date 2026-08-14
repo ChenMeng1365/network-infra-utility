@@ -830,5 +830,7 @@ module DnsQuery
   end
 end
 
-# 仅作为命令行执行时运行 CLI；被 require 时只提供模块能力
-exit DnsQuery::CLI.run(ARGV) if __FILE__ == $PROGRAM_NAME
+# 仅作为命令行执行时运行 CLI；被 require 时只提供模块能力。
+# 注意: gem 安装后经 wrapper 以 load 方式加载，__FILE__ 与 $PROGRAM_NAME
+# 路径不同，须按文件名 (basename) 判断才能同时覆盖两种运行方式。
+exit DnsQuery::CLI.run(ARGV) if File.basename($PROGRAM_NAME) == File.basename(__FILE__)

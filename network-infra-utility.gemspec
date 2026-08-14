@@ -24,7 +24,7 @@ Gem::Specification.new do |spec|
   # bin/ 既放对外命令 (geo-api) 也放开发脚本 (console/setup)，
   # executables 显式声明，避免把开发脚本当作系统命令安装到用户 PATH。
   spec.bindir       = "bin"
-  spec.executables  = %w[geo-api geo-get geo-load geo-doc]
+  spec.executables  = %w[geo-api geo-get geo-load geo-doc dns-query]
   spec.require_paths = ["document", "service", "service/ssh/lib", "support", "tool", "."]
 
   # geo-api 命令行服务依赖的运行时 gem
