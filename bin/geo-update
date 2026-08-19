@@ -1,0 +1,429 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+# coding: utf-8
+#
+# geo-update — network-infra-utility 的 GeoLite2 地址库下载更新工具
+#
+# 从 MaxMind 官方下载 GeoLite2 CSV 数据库（ASN / City / Country），解压到本地。
+# 可选链路: 下载 → 解压 → geo-load 转换 JSON → 重启 geo-api 服务。
+#
+# 默认行为:
+#   - 在命令行当前目录 (CWD) 寻找 GeoIP.conf 配置文件读取 LicenseKey
+#   - 下载的 zip 压缩包和解压后的 CSV 放置在当前目录
+#   - 仅下载+解压, 不转换不重启 (除非指定 --convert / --restart)
+#
+# 用法:
+#   geo-update -T                             # 生成 GeoIP.conf 模板到当前目录
+#   geo-update                                # 下载+解压 (读当前目录 GeoIP.conf)
+#   geo-update --convert                      # 下载+解压+转换 JSON
+#   geo-update --convert --restart            # 下载+解压+转换+重启 geo-api
+#   geo-update --asn-only                     # 仅下载 ASN
+#   geo-update --output-dir=D:\geodata        # 下载到指定目录
+#   geo-update --dry-run                      # 演练, 只打印动作
+#
+# 参数规则:
+#   geo-update [options]
+#
+# 选项:
+#   -T, --template                 在当前目录生成 GeoIP.conf 模板
+#   --config=FILE                  指定配置文件路径 (默认: ./GeoIP.conf)
+#   --license-key=KEY              指定 MaxMind 许可证密钥 (覆盖配置文件)
+#   --output-dir=DIR               下载/解压目录 (默认: 当前目录)
+#   --convert                      下载后调用 geo-load 转换 CSV → JSON
+#   --restart                      转换后重启 geo-api 服务 (隐含 --convert)
+#   --local-dir=DIR                使用本地已有 CSV 目录, 跳过下载
+#   --asn-only                     仅处理 ASN
+#   --city-only                    仅处理 City
+#   --country-only                 仅处理 Country
+#   --dry-run                      演练: 只打印将执行的动作
+#   -h, --help                     显示帮助
+#   -v, --version                  显示版本
+
+require "net/http"
+require "uri"
+require "fileutils"
+require "optparse"
+require "time"
+
+require_relative "../version"
+
+# ============================================================
+# 静态设定数据
+# ============================================================
+
+# GeoIP.conf 模板 (内容脱敏, 供用户填写真实信息)
+GEOIP_CONF_TEMPLATE = <<~CONF
+  # GeoIP.conf file for `geoipupdate` program, for versions >= 3.1.1.
+  # Used to update GeoIP databases from https://www.maxmind.com.
+  # For more information about this config file, visit the docs at
+  # https://dev.maxmind.com/geoip/updating-databases.
+
+  # `AccountID` is from your MaxMind account.
+  # 注册地址: https://www.maxmind.com/en/geolite2/signup
+  AccountID YOUR_ACCOUNT_ID
+
+  # `LicenseKey` is from your MaxMind account.
+  # 登录后在 Account → GeoIP2 / GeoLite2 → Manage License Keys 生成
+  LicenseKey YOUR_LICENSE_KEY
+
+  # `EditionIDs` is from your MaxMind account.
+  EditionIDs GeoLite2-ASN GeoLite2-City GeoLite2-Country
+CONF
+
+# 三类数据与官方 edition_id 的对应关系
+EDITIONS = {
+  "city"    => "GeoLite2-City-CSV",
+  "country" => "GeoLite2-Country-CSV",
+  "asn"     => "GeoLite2-ASN-CSV",
+}.freeze
+
+BASE_URL = "https://download.maxmind.com/app/geoip_download"
+
+# ============================================================
+# 处理方法
+# ============================================================
+
+def setup_console_encoding
+  return unless RUBY_PLATFORM =~ /mswin|mingw|cyg/
+  begin
+    system("chcp 65001 > NUL 2>&1")
+    $stdout.set_encoding(Encoding::UTF_8)
+    $stderr.set_encoding(Encoding::UTF_8)
+  rescue StandardError
+    # 忽略编码设置失败
+  end
+end
+
+def log(msg)
+  puts msg
+end
+
+# 从 GeoIP.conf (geoipupdate 格式) 解析 LicenseKey / AccountID / EditionIDs
+def parse_geoip_config(path)
+  return nil unless File.exist?(path)
+  conf = { license_key: nil, account_id: nil, editions: [] }
+  File.foreach(path, encoding: "UTF-8") do |line|
+    line = line.strip
+    next if line.empty? || line.start_with?("#")
+    case line
+    when /^AccountID\s+(.+)$/i  then conf[:account_id] = $1.strip
+    when /^LicenseKey\s+(.+)$/i then conf[:license_key] = $1.strip
+    when /^EditionIDs\s+(.+)$/i then conf[:editions] = $1.strip.split(/\s+/)
+    end
+  end
+  conf
+end
+
+# 生成 GeoIP.conf 模板文件
+def generate_template(dest_path)
+  if File.exist?(dest_path)
+    abort "✗ 文件已存在: #{dest_path}\n  请先删除或重命名现有文件再生成模板。"
+  end
+  File.write(dest_path, GEOIP_CONF_TEMPLATE, encoding: "UTF-8")
+  log("已生成 GeoIP.conf 模板: #{dest_path}")
+  log("请编辑此文件, 填入真实的 AccountID 和 LicenseKey 后再执行下载。")
+  log("注册 MaxMind 账号: https://www.maxmind.com/en/geolite2/signup")
+end
+
+# 带进度显示的 HTTP 下载 (直连优先, 代理兜底, 自动跟随重定向)
+def download_file(url, dest, redirect_count = 0)
+  if redirect_count > 5
+    abort "✗ 重定向次数过多 (>5), 可能存在循环重定向"
+  end
+
+  uri = URI(url)
+  log("  下载: #{url.sub(/license_key=[^&]+/, 'license_key=***')}")
+
+  # 构建下载方式列表: 直连优先, 环境变量代理兜底
+  proxy   = ENV["HTTP_PROXY"] || ENV["HTTPS_PROXY"] || ENV["http_proxy"] || ENV["https_proxy"]
+  methods = [{ proxy: nil, label: "直连" }]
+  if proxy && !proxy.empty?
+    puri = URI(proxy)
+    methods << { proxy: { addr: puri.host, port: puri.port }, label: "代理 #{puri.host}:#{puri.port}" }
+  end
+
+  last_err = nil
+  methods.each do |m|
+    begin
+      opts = { use_ssl: uri.scheme == "https", open_timeout: 30, read_timeout: 300 }
+      if m[:proxy]
+        opts[:proxy_addr] = m[:proxy][:addr]
+        opts[:proxy_port] = m[:proxy][:port]
+      end
+      log("  [#{m[:label]}] 连接中 ...")
+      Net::HTTP.start(uri.host, uri.port, **opts) do |http|
+        req = Net::HTTP::Get.new(uri)
+        http.request(req) do |res|
+          case res
+          when Net::HTTPSuccess
+            total = res["content-length"]&.to_i
+            done = 0
+            File.open(dest, "wb") do |f|
+              res.read_body do |chunk|
+                f.write(chunk)
+                done += chunk.bytesize
+                if total && total > 0
+                  pct = (done.to_f / total * 100).round
+                  print "\r  进度: %3d%% (%s / %s 字节)  " % [pct, done, total]
+                end
+              end
+            end
+            puts
+            return File.size(dest)
+          when Net::HTTPRedirection
+            new_url = res["location"]
+            if new_url && !new_url.empty?
+              new_url = URI.join(url, new_url).to_s if new_url.start_with?("/")
+              log("  重定向 → #{new_url.sub(/license_key=[^&]+/, 'license_key=***')}")
+              return download_file(new_url, dest, redirect_count + 1)
+            end
+            abort "✗ 重定向但无 Location 头"
+          when Net::HTTPUnauthorized, Net::HTTPForbidden
+            abort "✗ 下载被拒绝 (#{res.code}): #{res.body[0, 200]}\n  请检查 license key 是否正确, 或 MaxMind 账号是否已激活 GeoLite2 下载。"
+          else
+            abort "✗ 下载失败 (HTTP #{res.code}): #{res.body[0, 200]}"
+          end
+        end
+      end
+    rescue OpenSSL::SSL::SSLError, Errno::ECONNRESET, Net::OpenTimeout, Net::ReadTimeout, Errno::ECONNREFUSED => e
+      last_err = e
+      log("  ! [#{m[:label]}] 失败 (#{e.class}): #{e.message[0, 100]}")
+      next
+    end
+  end
+  abort "✗ 所有下载方式均失败, 最后错误: #{last_err&.class}: #{last_err&.message}"
+end
+
+# 解压 zip (用系统 tar)
+def extract_file(zip_path, dest_dir)
+  FileUtils.mkdir_p(dest_dir)
+  if zip_path.end_with?(".tar.gz", ".tgz")
+    system("tar", "-xzf", zip_path, "-C", dest_dir)
+  else
+    system("tar", "-xf", zip_path, "-C", dest_dir)
+  end
+  $?.success? || abort("✗ 解压失败: #{zip_path}")
+end
+
+# 下载三类官方 zip (同一天已存在则跳过)
+def download_editions(output_dir, license_key, editions)
+  today = Time.now.strftime("%Y%m%d")
+  editions.each do |name, edition_id|
+    zip_name = "#{edition_id}_#{today}.zip"
+    zip_path = File.join(output_dir, zip_name)
+    if File.exist?(zip_path) && File.size(zip_path) > 1000
+      log("  跳过 (已存在): #{zip_name}")
+      next
+    end
+
+    url = "#{BASE_URL}?edition_id=#{edition_id}&license_key=#{license_key}&suffix=zip"
+    download_file(url, zip_path)
+    log("  完成: #{zip_name} (#{format('%.2f', File.size(zip_path).to_f / 1_048_576)} MB)")
+  end
+end
+
+# 解压 output_dir 下所有 zip
+def extract_all(output_dir)
+  Dir.glob(File.join(output_dir, "*.zip")).each do |zip_path|
+    next if File.size(zip_path) <= 1000
+    dest = File.join(output_dir, File.basename(zip_path, ".zip"))
+    extract_file(zip_path, dest)
+  end
+end
+
+# 调用 geo-load 转换 CSV → JSON
+def run_geo_load(raw_dir, doc_dir, only = nil)
+  geo_load_script = File.expand_path("geo-load", __dir__)
+  unless File.exist?(geo_load_script)
+    abort "✗ 找不到 geo-load 脚本: #{geo_load_script}"
+  end
+  cmd = ["ruby", geo_load_script, raw_dir, doc_dir]
+  cmd << "--#{only}-only" if only
+  log("  执行: #{cmd.join(' ')}")
+  system(*cmd)
+end
+
+# Windows: 用 PowerShell 查找并停止旧 geo-api 进程, 再启动新服务
+def restart_geo_api(data_dir)
+  if RUBY_PLATFORM =~ /mswin|mingw|cyg/
+    ps_cmd = 'powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match ''geo-api'' } | ForEach-Object { $_.ProcessId }"'
+    pids = `#{ps_cmd}`.lines.map(&:strip).reject(&:empty?)
+    unless pids.empty?
+      log("  停止旧服务 (PID: #{pids.join(', ')})")
+      pids.each { |pid| system("taskkill", "/PID", pid, "/F") }
+      sleep 2
+    end
+    geo_api_script = File.expand_path("geo-api", __dir__)
+    log("  启动服务: geo-api -d #{data_dir}")
+    system("powershell", "-NoProfile", "-Command",
+           "Start-Process ruby -ArgumentList '#{geo_api_script}','-d','#{data_dir}' -WindowStyle Hidden")
+  else
+    system("pkill", "-f", "geo-api") rescue nil
+    log("  请手动启动: geo-api -d #{data_dir}")
+  end
+end
+
+# ============================================================
+# 业务流程实例
+# ============================================================
+
+setup_console_encoding
+
+options = {
+  template: false,
+  config_file: nil,
+  license_key: nil,
+  output_dir: nil,
+  convert: false,
+  restart: false,
+  local_dir: nil,
+  only: nil,
+  dry_run: false
+}
+
+parser = OptionParser.new do |opts|
+  opts.banner = <<~BAN
+    geo-update — GeoLite2 地址库下载更新工具 (network-infra-utility)
+
+    用法:
+      geo-update -T                             # 生成 GeoIP.conf 模板
+      geo-update                                # 下载+解压 (读当前目录 GeoIP.conf)
+      geo-update --convert                      # 下载+解压+转换 JSON
+      geo-update --convert --restart            # 下载+解压+转换+重启 geo-api
+      geo-update --asn-only                     # 仅下载 ASN
+      geo-update --output-dir=D:\geodata        # 下载到指定目录
+
+    选项:
+  BAN
+  opts.on("-T", "--template", "在当前目录生成 GeoIP.conf 模板") { options[:template] = true }
+  opts.on("--config=FILE", "指定配置文件路径 (默认: 当前目录/GeoIP.conf)") { |v| options[:config_file] = v }
+  opts.on("--license-key=KEY", "指定 MaxMind 许可证密钥 (覆盖配置文件)") { |v| options[:license_key] = v }
+  opts.on("--output-dir=DIR", "下载/解压目录 (默认: 当前目录)") { |v| options[:output_dir] = v }
+  opts.on("--convert", "下载后调用 geo-load 转换 CSV → JSON") { options[:convert] = true }
+  opts.on("--restart", "转换后重启 geo-api 服务 (隐含 --convert)") { options[:restart] = true; options[:convert] = true }
+  opts.on("--local-dir=DIR", "使用本地已有 CSV 目录, 跳过下载") { |v| options[:local_dir] = v }
+  opts.on("--asn-only", "仅处理 ASN") { options[:only] = "asn" }
+  opts.on("--city-only", "仅处理 City") { options[:only] = "city" }
+  opts.on("--country-only", "仅处理 Country") { options[:only] = "country" }
+  opts.on("--dry-run", "演练: 只打印将执行的动作") { options[:dry_run] = true }
+  opts.on("-v", "--version", "显示版本") do
+    puts "geo-update #{NetworkInfraUtility::VERSION}"
+    exit 0
+  end
+  opts.on("-h", "--help", "显示帮助") do
+    puts opts
+    exit 0
+  end
+end
+parser.parse!
+
+# ---- --template: 生成 GeoIP.conf 模板然后退出 ----
+if options[:template]
+  template_path = File.expand_path("GeoIP.conf", Dir.pwd)
+  generate_template(template_path)
+  exit 0
+end
+
+# ---- 确定输出目录 (默认: 当前目录) ----
+output_dir = options[:output_dir] ? File.expand_path(options[:output_dir]) : Dir.pwd
+unless File.directory?(output_dir)
+  begin
+    FileUtils.mkdir_p(output_dir)
+  rescue SystemCallError => e
+    abort "✗ 无法创建输出目录 #{output_dir}: #{e.message}"
+  end
+end
+
+# ---- 确定 JSON 输出目录 (convert 时使用) ----
+doc_dir = File.expand_path("geodb", output_dir)
+
+# ---- 确定数据源目录 ----
+if options[:local_dir]
+  raw_dir = File.expand_path(options[:local_dir])
+  abort "✗ 本地目录不存在: #{raw_dir}" unless File.directory?(raw_dir)
+  log("数据源: 本地目录 #{raw_dir} (跳过下载)")
+else
+  # ---- 获取 license key: --license-key > --config > 当前目录 GeoIP.conf ----
+  license = options[:license_key]
+  if license.to_s.empty?
+    conf_path = options[:config_file] || File.expand_path("GeoIP.conf", Dir.pwd)
+    conf = parse_geoip_config(conf_path)
+    if conf && !conf[:license_key].to_s.empty? && conf[:license_key] != "YOUR_LICENSE_KEY"
+      license = conf[:license_key]
+      log("从 #{conf_path} 读取 LicenseKey (AccountID: #{conf[:account_id]})")
+    else
+      abort <<~MSG
+        ✗ 缺少 MaxMind license key
+          未在当前目录找到有效的 GeoIP.conf, 或文件中 LicenseKey 未填写。
+          配置文件查找位置: #{conf_path}
+
+          解决方法:
+            1. 生成模板:  geo-update -T
+            2. 编辑文件:  填入真实的 AccountID 和 LicenseKey
+            3. 重新运行:  geo-update
+
+          或直接指定:
+            geo-update --license-key=YOUR_KEY
+            geo-update --config=/path/to/GeoIP.conf
+
+          注册 MaxMind 账号: https://www.maxmind.com/en/geolite2/signup
+      MSG
+    end
+  end
+  options[:license_key] = license
+  raw_dir = output_dir
+end
+
+editions = options[:only] ? { options[:only] => EDITIONS[options[:only]] } : EDITIONS
+if options[:only] && !EDITIONS[options[:only]]
+  abort "✗ 未知类型: #{options[:only]} (可用: city/country/asn)"
+end
+
+# ---- 打印执行计划 ----
+log("╭─ geo-update #{NetworkInfraUtility::VERSION} ───────────────────────────────")
+log("│ 类型:     #{editions.keys.join(' / ')}")
+log("│ 输出目录: #{output_dir}")
+log("│ 数据源:   #{options[:local_dir] ? raw_dir : 'MaxMind 官方下载'}")
+log("│ 动作:     #{options[:dry_run] ? '(演练, 不执行)' : '执行'}")
+if options[:convert]
+  log("│ 转换:     是 (geo-load → #{doc_dir})")
+  log("│ 重启:     #{options[:restart] ? '是' : '否'}")
+end
+log("╰──────────────────────────────────────────────────")
+
+exit 0 if options[:dry_run]
+
+# ---- 1. 下载 + 解压 ----
+unless options[:local_dir]
+  log("[1/3] 下载 GeoLite2 CSV ...")
+  download_editions(output_dir, options[:license_key], editions)
+  log("")
+  log("[2/3] 解压 ...")
+  extract_all(output_dir)
+end
+
+# ---- 2. geo-load 转换 ----
+if options[:convert]
+  step = options[:local_dir] ? "[1/2]" : "[3/3]"
+  log("#{step} 转换 CSV → JSON (可能需要几十分钟~数小时) ...")
+  ok = run_geo_load(raw_dir, doc_dir, options[:only])
+  unless ok
+    log("✗ geo-load 转换失败 (exit #{$?.exitstatus})")
+    exit 1
+  end
+end
+
+# ---- 3. 重启 geo-api ----
+if options[:restart]
+  log("重启 geo-api ...")
+  restart_geo_api(doc_dir)
+end
+
+log("完成。")
+if options[:convert]
+  log("  JSON 数据: #{doc_dir}")
+  log("  验证:      geo-get 8.8.8.8 -j")
+else
+  log("  压缩包和解压目录: #{output_dir}")
+  log("  转换为 JSON:       geo-update --convert  (或 geo-load #{output_dir})")
+end
