@@ -1,13 +1,3 @@
----
-AIGC:
-  ContentProducer: '001191110102MAD55U9H0F10002'
-  ContentPropagator: '001191110102MAD55U9H0F10002'
-  Label: '1'
-  ProduceID: '327b0e14-d4aa-4064-bd5a-c596fad52e74'
-  PropagateID: '327b0e14-d4aa-4064-bd5a-c596fad52e74'
-  ReservedCode1: 'c77ee856-ff93-4d59-bbda-652be5dd5d7b'
-  ReservedCode2: 'c77ee856-ff93-4d59-bbda-652be5dd5d7b'
----
 
 # SSH 连接客户端
 
@@ -19,33 +9,56 @@ Ruby + 双引擎架构的 SSH 连接客户端。SSH 协议核心由**可插拔�
 
 ## 目录
 
-- [环境要求](#环境要求)
-- [安装与编译](#安装与编译)
-- [快速开始](#快速开始)
-- [CLI 命令参考](#cli-命令参考)
-  - [connect — 连接服务器](#connect--连接服务器)
-  - [batch — 批量执行命令](#batch--批量执行命令)
-  - [themes — 列出配色主题](#themes--列出配色主题)
-  - [version — 显示版本](#version--显示版本)
-- [连接参数详解](#连接参数详解)
-- [配置文件](#配置文件)
-  - [settings.yml](#settingsyml)
-  - [sessions.yml](#sessionsyml)
-  - [known\_hosts.yml](#known_hostsyml)
-- [凭据加密（Vault）](#凭据加密vault)
-- [终端配色主题](#终端配色主题)
-- [编程 API 使用](#编程-api-使用)
-  - [Client — 生命周期管理](#client--生命周期管理)
-  - [Session — 会话操作](#session--会话操作)
-  - [Terminal::Emulator — 终端交互](#terminalemulator--终端交互)
-  - [Automation::MacroEngine — 登录宏](#automationmacroengine--登录宏)
-  - [Security::HostKey — 主机密钥管理](#securityhostkey--主机密钥管理)
-- [RPC 方法列表](#rpc-方法列表)
-- [架构说明](#架构说明)
-  - [启动流程](#启动流程)
-  - [分工](#分工)
-  - [关键模块在运行时的角色](#关键模块在运行时的角色)
-- [项目结构](#项目结构)
+- [SSH 连接客户端](#ssh-连接客户端)
+  - [目录](#目录)
+  - [环境要求](#环境要求)
+    - [Ruby 依赖](#ruby-依赖)
+  - [安装与编译](#安装与编译)
+    - [1. 编译 Rust 核心引擎（默认）](#1-编译-rust-核心引擎默认)
+    - [2. 编译 Erlang 核心引擎（可选备选）](#2-编译-erlang-核心引擎可选备选)
+    - [3. 验证引擎可启动](#3-验证引擎可启动)
+    - [4. 验证 Ruby 端](#4-验证-ruby-端)
+  - [快速开始](#快速开始)
+    - [连接到服务器](#连接到服务器)
+    - [编程方式使用](#编程方式使用)
+  - [CLI 命令参考](#cli-命令参考)
+    - [connect — 连接服务器](#connect--连接服务器)
+    - [batch — 批量执行命令](#batch--批量执行命令)
+    - [themes — 列出配色主题](#themes--列出配色主题)
+    - [version — 显示版本](#version--显示版本)
+  - [连接参数详解](#连接参数详解)
+    - [auth 字段](#auth-字段)
+    - [jumps 字段](#jumps-字段)
+    - [proxy 字段（仅 Erlang 引擎）](#proxy-字段仅-erlang-引擎)
+  - [配置文件](#配置文件)
+    - [settings.yml](#settingsyml)
+    - [sessions.yml](#sessionsyml)
+    - [known\_hosts.yml](#known_hostsyml)
+  - [凭据加密（Vault）](#凭据加密vault)
+    - [加密存储](#加密存储)
+    - [vault.yml 格式](#vaultyml-格式)
+  - [终端配色主题](#终端配色主题)
+    - [自定义主题](#自定义主题)
+  - [编程 API 使用](#编程-api-使用)
+    - [Client — 生命周期管理](#client--生命周期管理)
+    - [Session — 会话操作](#session--会话操作)
+    - [Terminal::Emulator — 终端交互](#terminalemulator--终端交互)
+    - [Automation::MacroEngine — 登录宏](#automationmacroengine--登录宏)
+    - [Security::HostKey — 主机密钥管理](#securityhostkey--主机密钥管理)
+  - [RPC 方法列表](#rpc-方法列表)
+    - [连接管理](#连接管理)
+    - [通道管理](#通道管理)
+    - [SFTP 文件传输](#sftp-文件传输)
+    - [端口转发](#端口转发)
+    - [引擎管理](#引擎管理)
+    - [保活管理](#保活管理)
+    - [反向 RPC（引擎 → Ruby）](#反向-rpc引擎--ruby)
+    - [推送事件（引擎 → Ruby，notification）](#推送事件引擎--rubynotification)
+  - [架构说明](#架构说明)
+    - [启动流程](#启动流程)
+    - [分工](#分工)
+    - [关键模块在运行时的角色](#关键模块在运行时的角色)
+  - [项目结构](#项目结构)
 
 ---
 

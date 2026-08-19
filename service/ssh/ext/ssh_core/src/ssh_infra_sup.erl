@@ -24,9 +24,22 @@ generate_endpoint_file() ->
     end,
     UID = case os:type() of
         {win32, _} -> os:getenv("USERNAME");
-        _ -> integer_to_list(os:getuid())
+        _ -> get_uid()
     end,
     filename:join(Tmp, "ssh_core_" ++ UID ++ ".endpoint").
+
+%% @doc Cross-version UID retrieval.
+%% os:getuid/0 was introduced in OTP 26; fall back to os:cmd("id -u")
+%% for older OTP versions (or source-compiled musl builds where the BIF
+%% may be absent).
+get_uid() ->
+    case erlang:function_exported(os, getuid, 0) of
+        true ->
+            integer_to_list(os:getuid());
+        false ->
+            %% OTP < 26 or musl build without getuid BIF
+            string:trim(os:cmd("id -u"))
+    end.
 
 %% @doc one_for_one, intensity 5/60s.
 %% Keeping infra processes separate from conn_sup so a single connection
