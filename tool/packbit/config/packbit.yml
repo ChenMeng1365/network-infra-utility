@@ -1,0 +1,41 @@
+# packbit 配置文件
+# 用法: packbit -f <pcap> -c packbit.yml
+
+# ==== 筛选 ====
+# 只保留满足全部条件的包；留空或省略 = 不过滤
+filter:
+  protocol:          # 按协议名筛选: [tcp, udp, icmp, arp, ipv6]
+    - tcp
+  # port: 80          # 按端口号筛选 (源或目的)
+  # ip: 10.0.0.1      # 按 IP 地址筛选 (源或目的)
+
+# ==== 统计 ====
+stats:
+  # group_by 取值:
+  #   stack         按协议栈分组 (Ethernet/IPv4/TCP...)
+  #   protocol      按顶层协议分组 (TCP/UDP/ARP...)
+  #   flow          源IP->目的IP 组合 (= [src_ip, dst_ip])
+  #   字段列表       任意字段组合, 多行 - field_name 格式:
+  #     group_by:
+  #       - src_ip
+  #       - dst_ip
+  #       - src_port
+  #       - dst_port
+  #       - protocol
+  #   可用字段: src_ip dst_ip src_port dst_port protocol
+  #             ttl header_len total_length ...
+  group_by: stack
+  sort_by: count      # count (按包数排序) | bytes (按流量排序)
+  top: 10             # 只显示前 N 条，0 = 全部
+  sort: desc          # desc (多→少) | asc (少→多)
+
+# ==== 展示 ====
+display:
+  mode: detail        # detail (逐包逐层) | summary (统计表)
+  # fields:           # 紧凑模式: 只显示这些字段，一行一包
+  #   - src_ip
+  #   - dst_ip
+  #   - src_port
+  #   - dst_port
+  payload: true       # 显示载荷 (detail 模式)
+  color: false        # 彩色输出 (false = 纯文本)

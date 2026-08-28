@@ -1,0 +1,25 @@
+# packbit 配置 — 五元组流量统计
+# 用法: packbit -f <pcap> -c five-tuple.yml -d
+#
+# 五元组: 源IP + 目的IP + 源端口 + 目的端口 + 协议
+# 每个流独立统计包数和总流量
+
+# 不筛选，全部包参与统计
+filter:
+  protocol: []
+
+# 按五元组合分组，同时统计包数和总流量
+stats:
+  group_by:
+    - src_ip
+    - dst_ip
+    - src_port
+    - dst_port
+    - protocol
+  sort_by: bytes        # count = 按包数排序 | bytes = 按流量排序
+  sort: desc            # desc (多→少) | asc (少→多)
+  top: 0                # 0 = 显示全部
+
+# 摘要模式
+display:
+  mode: summary

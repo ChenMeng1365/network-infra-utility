@@ -1,0 +1,17 @@
+# packbit 配置 — 源IP->目的IP 流量统计
+# 用法: packbit -f <pcap> -c tool/packbit/config/flow.yml -d
+
+# 不筛选，全部包参与统计
+filter:
+  protocol: []
+
+# 按 源IP->目的IP 组合分组，同时统计包数和总流量
+stats:
+  group_by: flow        # flow = src_ip -> dst_ip 组合
+  sort_by: bytes        # 按流量排序 (count = 按包数排序)
+  sort: desc            # desc (多→少) | asc
+  top: 0                # 0 = 显示全部
+
+# 摘要模式
+display:
+  mode: summary

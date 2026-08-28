@@ -1,0 +1,227 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+# coding: utf-8
+#
+# packbit — pcap 抓包解析命令行工具 (Ruby CLI + Erlang 引擎)
+#
+# Ruby 负责命令行参数解析与用户交互，核心解析由 Erlang escript 实现。
+# 通过读取 YAML 配置文件决定筛选、统计、展示数据包的内容。
+#
+# 用法:
+#   packbit -f <pcap>                          # 全量逐字段解析
+#   packbit -f <pcap> -d                       # 摘要: 统计表 + 每包一行
+#   packbit -f <pcap> -c packbit.yml           # 按配置文件筛选/统计/展示
+#   packbit -f <pcap> -p 80 tcp                # 按端口+协议筛选
+#   packbit -f <pcap> -c flow.yml -d           # flow 分组统计
+#   packbit -f <pcap -c packbit.yml -d         # 配置 + 摘要模式
+#   packbit -h                                 # 帮助
+#   packbit -v                                 # 版本
+#
+# 选项:
+#   -f, --file FILE       pcap 文件路径
+#   -c, --config FILE     YAML 配置文件 (筛选/统计/展示)
+#   -d, --summary         摘要模式 (统计表 + 每包一行)
+#   -p, --port PORT PROTO 按端口+协议筛选 (如 -p 80 tcp)
+#   -h, --help            显示帮助
+#   -v, --version         显示版本
+#
+# 退出码: 0 成功, 1 参数错误/Erlang 未安装
+
+require "optparse"
+require "rbconfig"
+require "shellwords"
+require_relative "../version"
+
+module Packbit
+  ERL_DIR = File.expand_path("../tool/packbit/erl", __dir__)
+  ESCRIPT = File.join(ERL_DIR, "packbit.erl")
+  DEFAULT_CFG = File.expand_path("../tool/packbit/config/packbit.yml", __dir__)
+
+  module Platform
+    def self.erlang?
+      @has_erlang ||= begin
+        if windows?
+          system("where escript >NUL 2>&1")
+        else
+          system("command -v escript >/dev/null 2>&1")
+        end
+      end
+    end
+
+    def self.windows?
+      RbConfig::CONFIG["host_os"] =~ /mswin|mingw|cygwin|windows/
+    end
+
+    def self.escript_path
+      @escript_path ||= begin
+        if windows?
+          `where escript`.strip.lines.first&.strip
+        else
+          `command -v escript`.strip
+        end
+      end
+    end
+  end
+
+  module CLI
+    def self.run(argv)
+      options = { file: nil, config: nil, summary: false, port: nil, proto: nil,
+                  help: false, version: false }
+
+      parser = build_parser(options)
+      begin
+        parser.parse!(argv)
+      rescue OptionParser::ParseError => e
+        warn "错误: #{e.message}"
+        warn "用法: packbit -f <pcap> [选项]  (用 -h 查看完整帮助)"
+        return 1
+      end
+
+      return print_help(parser) if options[:help]
+      return print_version if options[:version]
+
+      if options[:file].nil?
+        warn "错误: 缺少 pcap 文件路径 (-f)"
+        warn "用法: packbit -f <pcap> [选项]  (用 -h 查看完整帮助)"
+        return 1
+      end
+
+      unless File.exist?(options[:file])
+        warn "错误: 文件不存在: #{options[:file]}"
+        return 1
+      end
+
+      unless Platform.erlang?
+        warn "错误: 未检测到 Erlang escript"
+        warn "  请安装 Erlang/OTP:"
+        warn "    Windows:  choco install erlang  或  下载 https://www.erlang.org/downloads"
+        warn "    Linux:    apt install erlang  /  yum install erlang"
+        warn "    macOS:    brew install erlang"
+        return 1
+      end
+
+      invoke_escript(options)
+    end
+
+    def self.invoke_escript(options)
+      if Platform.windows?
+        q = ->(s) { "\"#{s}\"" }
+      else
+        q = ->(s) { Shellwords.shellescape(s) }
+      end
+
+      args = ["-f", q.call(options[:file])]
+
+      cfg = options[:config]
+      args += ["-c", q.call(cfg)] if cfg && !cfg.empty? && File.exist?(cfg)
+
+      args << "-d" if options[:summary]
+
+      if options[:port] && options[:proto]
+        args += ["-p", options[:port].to_s, options[:proto]]
+      end
+
+      escript = Platform.escript_path || "escript"
+      cmd = "#{q.call(escript)} #{q.call(ESCRIPT)} #{args.join(' ')}"
+
+      output = `#{cmd} 2>&1`
+      code = $?.exitstatus
+
+      # Windows 下 Erlang 输出可能为 Latin-1，统一转 UTF-8
+      if Platform.windows? && !output.valid_encoding?
+        output = output.force_encoding(Encoding::ISO_8859_1)
+                        .encode(Encoding::UTF_8, invalid: :replace, undef: :replace)
+      end
+
+      puts output
+      code
+    end
+
+    def self.build_parser(options)
+      OptionParser.new do |opts|
+        opts.banner = <<~BAN
+          packbit — pcap 抓包解析工具 (Ruby CLI + Erlang 引擎)
+
+          通过 YAML 配置文件决定筛选、统计、展示数据包的内容。
+          核心解析由 Erlang 实现，Ruby 负责命令行交互。
+
+          用法:
+            packbit -f <pcap>                          # 全量逐字段解析
+            packbit -f <pcap> -d                       # 摘要: 统计表 + 每包一行
+            packbit -f <pcap> -c packbit.yml           # 按配置文件筛选/统计/展示
+            packbit -f <pcap> -p 80 tcp                # 按端口+协议筛选
+            packbit -f <pcap> -c flow.yml -d           # flow 分组统计
+            packbit -h                                 # 帮助
+
+          选项:
+        BAN
+        opts.on("-f", "--file FILE", "pcap 文件路径") do |v|
+          options[:file] = v
+        end
+        opts.on("-c", "--config FILE", "YAML 配置文件 (筛选/统计/展示)") do |v|
+          options[:config] = v
+        end
+        opts.on("-d", "--summary", "摘要模式 (统计表 + 每包一行)") do
+          options[:summary] = true
+        end
+        opts.on("-p", "--port PORT", "按端口+协议筛选 (如 -p 80,tcp 或 -p \"80 tcp\")") do |v|
+          parts = v.split(/[\s,]+/)
+          if parts.size == 2
+            options[:port] = parts[0]
+            options[:proto] = parts[1]
+          else
+            warn "错误: -p 需要端口和协议 (如 -p 80,tcp)"
+            exit 1
+          end
+        end
+        opts.on("-v", "--version", "显示版本") do
+          options[:version] = true
+        end
+        opts.on("-h", "--help", "显示帮助") do
+          options[:help] = true
+        end
+      end
+    end
+
+    def self.print_help(parser)
+      puts parser
+      puts ""
+      puts "配置文件格式 (packbit.yml):"
+      puts "  filter:"
+      puts "    protocol: [tcp, udp]     # 按协议筛选"
+      puts "    port: 80                 # 按端口筛选"
+      puts "    ip: 10.0.0.1             # 按 IP 筛选"
+      puts "  stats:"
+      puts "    group_by: stack          # stack | protocol | flow | 字段列表"
+      puts "    # group_by:              # 字段列表写法 (多行 - item):"
+      puts "    #   - src_ip"
+      puts "    #   - dst_ip"
+      puts "    #   - src_port"
+      puts "    #   - protocol"
+      puts "    sort_by: count           # count | bytes (按包数或流量排序)"
+      puts "    top: 10                  # 前 N 条, 0=全部"
+      puts "    sort: desc               # desc | asc"
+      puts "  display:"
+      puts "    mode: detail             # detail | summary"
+      puts "    fields: [src_ip, dst_ip]  # 紧凑模式字段"
+      puts "    payload: true            # 显示载荷"
+      puts "    color: false              # 彩色输出"
+      puts ""
+      puts "group_by 取值:"
+      puts "  stack         按协议栈分组 (Ethernet/IPv4/TCP... -> "
+      puts "  protocol      按顶层协议分组 (TCP/UDP/ARP... )"
+      puts "  flow          源IP->目的IP 组合 (= [src_ip, dst_ip])"
+      puts "  字段列表       任意字段组合, 每行一个 - field_name"
+      puts "                可用字段: src_ip dst_ip src_port dst_port"
+      puts "                          protocol ttl header_len ..."
+      0
+    end
+
+    def self.print_version
+      puts "packbit #{NetworkInfraUtility::VERSION}"
+      0
+    end
+  end
+end
+
+exit Packbit::CLI.run(ARGV) if File.basename($PROGRAM_NAME) == File.basename(__FILE__)
