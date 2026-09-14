@@ -1,14 +1,3 @@
----
-AIGC:
-  ContentProducer: '001191110102MAD55U9H0F10002'
-  ContentPropagator: '001191110102MAD55U9H0F10002'
-  Label: '1'
-  ProduceID: '6a4e300b-498c-4b8e-aca3-75d6bf706299'
-  PropagateID: '6a4e300b-498c-4b8e-aca3-75d6bf706299'
-  ReservedCode1: '322e695f-ea2e-4e18-a164-50a935a6be6d'
-  ReservedCode2: '322e695f-ea2e-4e18-a164-50a935a6be6d'
----
-
 # GUIDE
 
 ## 在 Alpine 设备上重新编译 Rust 和 Erlang 引擎

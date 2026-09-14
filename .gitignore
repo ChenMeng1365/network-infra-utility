@@ -1,7 +1,7 @@
 
 # SPEC
-example/ssh/config_login_example.rb
-example/ssh/login_config.yml
+document/example/ssh/config_login_example.rb
+document/example/ssh/login_config.yml
 
 *.gem
 *.rbc
@@ -15,6 +15,7 @@ example/ssh/login_config.yml
 /test/version_tmp/
 /tmp/
 .temp
+.workbuddy
 
 # Used by dotenv library to load environment variables.
 # .env

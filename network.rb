@@ -33,10 +33,10 @@ module NetworkInfraUtility
   require_relative "support/switching/stp"
 
   # 工具层：依赖 support
-  require_relative "tool/probe/lib/network_infra_utility/probe"
+  require_relative "tool/probe/lib/probe"
 
   # 服务层：依赖 tool / support
-  require_relative "service/simlab/lib/network_infra_utility/simlab"
+  require_relative "service/simlab/lib/simlab"
   require_relative "service/ssh/lib/network_infra_utility/ssh"
   require_relative "service/geoquery/geoquery"
 
