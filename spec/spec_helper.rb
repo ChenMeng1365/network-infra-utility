@@ -1,18 +1,8 @@
 # frozen_string_literal: true
 
-require "bundler/setup"
+# Spec helper for routing/switching/simlab tests.
+# 不依赖 bundler/setup，直接加载所需模块。
+require "rspec"
 
-# 本 gem 按应用层次拆分为四个 require_paths（document/service/support/tool），
-# 并提供根目录统一入口 network.rb。
-#
-# 推荐用统一入口：
-#   require "network"
-#
-# 也可按需直接 require 具体模块（用于只测某一层）：
-#   require "tool/xxx"
-#   require "support/yyy"
-#
-# require_paths 已由 Bundler.setup 注入 $LOAD_PATH，无需手动 add_path。
-
-# SSH 模块位于 service/ssh/lib 下，需要手动 require
-require_relative "../service/ssh/lib/network_infra_utility/ssh"
+# 加载项目根目录到 LOAD_PATH
+$LOAD_PATH.unshift File.expand_path("..", __dir__)
