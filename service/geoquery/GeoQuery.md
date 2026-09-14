@@ -1,14 +1,3 @@
----
-AIGC:
-  ContentProducer: '001191110102MAD55U9H0F10002'
-  ContentPropagator: '001191110102MAD55U9H0F10002'
-  Label: '1'
-  ProduceID: 'e59331b0-4f63-4be7-b8b5-599344ba18fa'
-  PropagateID: 'e59331b0-4f63-4be7-b8b5-599344ba18fa'
-  ReservedCode1: 'cf064bd5-6507-42df-811c-57fc0e687f73'
-  ReservedCode2: 'cf064bd5-6507-42df-811c-57fc0e687f73'
----
-
 # GeoQuery 综合查询接口
 
 > 模块目录：`service/geoquery/`  

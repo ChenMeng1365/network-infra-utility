@@ -1,0 +1,152 @@
+#!/usr/bin/env ruby
+# coding: utf-8
+# frozen_string_literal: true
+
+# simctl - 路由交换仿真 CLI 工具。
+#
+# 用法：
+#   simctl simulate SCENARIO.yml          # 运行场景
+#   simctl simulate SCENARIO.yml --until 100  # 运行到指定时间
+#   simctl dump --rib R1 SCENARIO.yml    # 导出 RIB
+#   simctl dump --mac S1 SCENARIO.yml    # 导出 MAC 表
+#   simctl trace --from H1 --to 10.0.0.2 SCENARIO.yml  # 路径追踪
+
+require "thor"
+require_relative "../lib/simlab"
+
+module NetworkInfraUtility
+  module SimLab
+    class CLI < Thor
+      desc "simulate SCENARIO", "运行仿真场景"
+      option :until, type: :numeric, default: 100, desc: "运行到指定虚拟时间"
+      option :steps, type: :numeric, desc: "执行指定步数"
+      option :verbose, type: :boolean, default: false, desc: "详细输出"
+
+      def simulate(scenario_file)
+        sim = Simulation.new
+        sim.load(scenario_file)
+        sim.build
+
+        puts "Loading scenario: #{scenario_file}"
+        puts "Devices: #{sim.topology.device_names.join(', ')}"
+        puts "Links: #{sim.topology.links.size}"
+        puts "Running simulation..."
+
+        if options[:steps]
+          sim.run(steps: options[:steps])
+        else
+          sim.run(final_time: options[:until])
+        end
+
+        puts "Simulation completed at t=#{sim.time}"
+
+        if options[:verbose]
+          sim.topology.devices.each_value do |device|
+            if device.is_a?(Device::Router)
+              puts sim.observer.format_rib(device)
+            elsif device.is_a?(Device::Switch)
+              puts sim.observer.format_mac(device)
+            end
+          end
+        end
+      end
+
+      desc "dump SCENARIO", "导出设备表信息"
+      option :rib, type: :string, desc: "导出指定路由器的 RIB"
+      option :mac, type: :string, desc: "导出指定交换机的 MAC 表"
+      option :stp, type: :string, desc: "导出指定交换机的 STP 状态"
+      option :all, type: :boolean, default: false, desc: "导出所有设备"
+
+      def dump(scenario_file)
+        sim = Simulation.new
+        sim.load(scenario_file)
+        sim.build
+        sim.run(final_time: 1)  # 跑一个 tick 让协议初始化
+
+        if options[:rib]
+          device = sim.topology.devices[options[:rib]]
+          if device && device.is_a?(Device::Router)
+            puts sim.observer.format_rib(device)
+          else
+            puts "Device #{options[:rib]} not found or not a router"
+          end
+        end
+
+        if options[:mac]
+          device = sim.topology.devices[options[:mac]]
+          if device && device.is_a?(Device::Switch)
+            puts sim.observer.format_mac(device)
+          else
+            puts "Device #{options[:mac]} not found or not a switch"
+          end
+        end
+
+        if options[:stp]
+          device = sim.topology.devices[options[:stp]]
+          if device && device.is_a?(Device::Switch) && device.stp
+            stp_info = device.stp_dump
+            puts "=== STP: #{options[:stp]} ==="
+            puts "  Bridge ID: #{stp_info[:bridge_id]}"
+            puts "  Root ID: #{stp_info[:root_id]}"
+            puts "  Root Bridge: #{stp_info[:root_bridge]}"
+            stp_info[:ports].each { |port, info| puts "  #{port}: role=#{info[:role]} state=#{info[:state]}" }
+          else
+            puts "Device #{options[:stp]} not found, not a switch, or STP not enabled"
+          end
+        end
+
+        if options[:all]
+          sim.topology.devices.each_value do |device|
+            if device.is_a?(Device::Router)
+              puts sim.observer.format_rib(device)
+            elsif device.is_a?(Device::Switch)
+              puts sim.observer.format_mac(device)
+            end
+          end
+        end
+      end
+
+      desc "trace SCENARIO", "追踪转发路径"
+      option :from, type: :string, required: true, desc: "起始设备"
+      option :to, type: :string, required: true, desc: "目的 IP"
+
+      def trace(scenario_file)
+        sim = Simulation.new
+        sim.load(scenario_file)
+        sim.build
+        sim.run(final_time: 10)
+
+        result = sim.trace(from: options[:from], to: options[:to])
+        puts sim.observer.format_trace(result)
+      end
+
+      desc "list SCENARIO", "列出场景中的设备和链路"
+
+      def list(scenario_file)
+        sim = Simulation.new
+        sim.load(scenario_file)
+
+        puts "=== Devices ==="
+        sim.topology.devices.each_value do |d|
+          type = d.is_a?(Device::Router) ? "Router" : "Switch"
+          puts "  #{d.name} (#{type})"
+          if d.is_a?(Device::Router)
+            d.interfaces.each { |port, info| puts "    #{port}: #{info[:cidr]} (#{info[:status]})" }
+          else
+            puts "    Ports: #{d.ports.keys.join(', ')}"
+          end
+        end
+
+        puts "\n=== Links ==="
+        sim.topology.links.each do |link|
+          puts "  #{link.endpoint_a} <-> #{link.endpoint_b} (#{link.status}, bw=#{link.bandwidth}, delay=#{link.delay})"
+        end
+
+        puts "\n=== Hosts ==="
+        sim.topology.hosts.each { |name, info| puts "  #{name}: #{info[:ip]} gw=#{info[:gateway]}" }
+      end
+    end
+  end
+end
+
+NetworkInfraUtility::SimLab::CLI.start(ARGV)
