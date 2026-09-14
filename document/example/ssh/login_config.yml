@@ -1,0 +1,73 @@
+# ─── 设备登录配置文件 ─────────────────────────────────────────
+#
+# 用法：
+#   ruby example/ssh/config_login_example.rb --config example/ssh/login_config.yml
+#
+# 字段说明：
+#   host            目标设备 IP 或域名（必填）
+#   port            SSH 端口，默认 22
+#   user            SSH 用户名（必填）
+#   auth.type       认证类型：password / publickey / keyboard_interactive
+#   auth.password   密码（auth.type 为 password 时填写）
+#   auth.key_path   私钥文件路径（auth.type 为 publickey 时填写）
+#   auth.passphrase 私钥口令（可选，私钥加密时填写）
+#   auth.responses  键盘交互响应数组（auth.type 为 keyboard_interactive 时填写）
+#   key_dir         密钥搜索目录（可选，publickey 不指定 key_path 时依次搜索 id_ed25519/id_rsa/id_ecdsa）
+#   terminal_cols   终端列数，默认 100
+#   terminal_rows   终端行数，默认 30
+#   command_delay   每条预设命令之间的间隔秒数，默认 1.0
+#   shell_wait      连接后等待远程 shell 初始化的秒数，默认 2.0
+#   log_dir         会话日志目录，默认 .temp/
+#   commands        登录后自动执行的预设命令列表（按顺序逐条执行）
+# ──────────────────────────────────────────────────────────────
+
+# ── 设备连接信息 ──
+host: "192.168.1.100"
+port: 22
+user: "admin"
+
+# ── 认证方式（三选一，取消注释你需要的那个）──
+
+# 方式一：密码认证
+auth:
+  type: "password"
+  password: "your_password"
+
+# 方式二：证书（公钥）认证
+# auth:
+#   type: "publickey"
+#   key_path: "~/.ssh/id_ed25519"       # 私钥路径
+#   passphrase: ""                       # 私钥口令（未加密私钥留空或删掉此行）
+
+# 方式三：键盘交互认证
+# auth:
+#   type: "keyboard_interactive"
+#   password: "your_password"            # 单 prompt 场景，用密码作为响应
+#   # responses: ["resp1", "resp2"]      # 多 prompt 场景，按顺序填写
+
+# ── 密钥搜索目录（仅 publickey 且未指定 key_path 时生效）──
+# key_dir: "~/.ssh"
+
+# ── 终端设置 ──
+terminal_cols: 100
+terminal_rows: 30
+
+# ── 命令执行节奏 ──
+command_delay: 1.0
+shell_wait: 2.0
+
+# ── 会话日志 ──
+log_dir: ".temp/"
+
+# ── 登录后预设命令 ──
+# 按顺序逐条执行，每条之间等待 command_delay 秒收集输出
+# 网络设备常见用法：enable → enable 密码 → terminal monitor → show 命令
+commands:
+  # - "show version"
+  # - "show running-config"
+  # - "show ip interface brief"
+  # - "show inventory"
+  # - "enable"
+  # - "enable_password_here"
+  # - "terminal monitor"
+  # - "show running-config"

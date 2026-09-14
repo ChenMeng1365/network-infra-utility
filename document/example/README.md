@@ -1,14 +1,3 @@
----
-AIGC:
-  ContentProducer: '001191110102MAD55U9H0F10002'
-  ContentPropagator: '001191110102MAD55U9H0F10002'
-  Label: '1'
-  ProduceID: '280abcf5-d7c0-452c-85cc-30af5b167e2d'
-  PropagateID: '280abcf5-d7c0-452c-85cc-30af5b167e2d'
-  ReservedCode1: '34de548f-6445-40e8-8a57-35468439abd5'
-  ReservedCode2: '34de548f-6445-40e8-8a57-35468439abd5'
----
-
 # Example
 
 存放常用场景的**功能用例**（区别于 `spec/` 的原子能力验证）。

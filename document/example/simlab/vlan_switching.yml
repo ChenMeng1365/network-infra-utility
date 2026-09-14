@@ -1,0 +1,49 @@
+---
+# 交换机基础场景：两个交换机 + VLAN + MAC 学习
+# S1 和 S2 互联，S1 下挂主机 H1，S2 下挂主机 H2
+# H1 和 H2 在同一 VLAN 10，可互通
+
+topology:
+  switches:
+    S1:
+      ports: [Gi0/1, Gi0/2, Gi0/24]
+      access_ports:
+        Gi0/1: 10
+        Gi0/2: 10
+      trunk_ports:
+        Gi0/24:
+          allowed: [10]
+          native: 1
+    S2:
+      ports: [Gi0/1, Gi0/2, Gi0/24]
+      access_ports:
+        Gi0/1: 10
+        Gi0/2: 10
+      trunk_ports:
+        Gi0/24:
+          allowed: [10]
+          native: 1
+  links:
+    - [S1:Gi0/24, S2:Gi0/24]
+  hosts:
+    H1:
+      ip: 192.168.10.1/24
+      gateway: 192.168.10.254
+      mac: "00:1a:2b:3c:4d:01"
+    H2:
+      ip: 192.168.10.2/24
+      gateway: 192.168.10.254
+      mac: "00:1a:2b:3c:4d:02"
+
+simulation:
+  until: 50
+  protocol_interval: 10
+
+traffic:
+  - type: link_down
+    device: S1
+    port: Gi0/24
+    at: 30
+
+expect:
+  - mac_learned: true

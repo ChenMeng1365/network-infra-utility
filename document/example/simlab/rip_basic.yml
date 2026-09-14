@@ -1,0 +1,46 @@
+---
+# RIP 基础场景：三个路由器链式连接，RIP 学习路由
+# R1 --- R2 --- R3
+# 期望：R1 通过 RIP 学到 R3 的下游网段
+
+topology:
+  routers:
+    R1:
+      interfaces:
+        Gi0/0: 10.0.1.1/24
+        Gi0/1: 192.168.1.1/24
+      rip: {}
+    R2:
+      interfaces:
+        Gi0/0: 10.0.1.2/24
+        Gi0/1: 10.0.2.1/24
+      rip: {}
+    R3:
+      interfaces:
+        Gi0/0: 10.0.2.2/24
+        Gi0/1: 192.168.2.1/24
+      rip: {}
+  links:
+    - [R1:Gi0/0, R2:Gi0/0]
+    - [R2:Gi0/1, R3:Gi0/0]
+
+protocols:
+  rip:
+    neighbors:
+      - { router: R1, neighbor: R2, port: Gi0/0 }
+      - { router: R2, neighbor: R1, port: Gi0/0 }
+      - { router: R2, neighbor: R3, port: Gi0/1 }
+      - { router: R3, neighbor: R2, port: Gi0/0 }
+
+simulation:
+  until: 200
+  protocol_interval: 30
+
+traffic:
+  - type: ping
+    from: R1
+    to: 192.168.2.1
+    at: 100
+
+expect:
+  - rib_converged: [R1, R2, R3]

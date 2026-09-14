@@ -1,0 +1,53 @@
+---
+# OSPF 基础场景：两个路由器通过 OSPF 学习路由
+# 拓扑：R1 --- R2
+# R1 有直连网段 10.0.0.0/24（与 R2 互连）和 192.168.1.0/24（下游）
+# R2 有直连网段 10.0.0.0/24（与 R1 互连）和 192.168.2.0/24（下游）
+# 期望：R1 通过 OSPF 学到 192.168.2.0/24，R2 通过 OSPF 学到 192.168.1.0/24
+
+topology:
+  routers:
+    R1:
+      interfaces:
+        Gi0/0: 10.0.0.1/24
+        Gi0/1: 192.168.1.1/24
+      ospf:
+        router_id: 1.1.1.1
+    R2:
+      interfaces:
+        Gi0/0: 10.0.0.2/24
+        Gi0/1: 192.168.2.1/24
+      ospf:
+        router_id: 2.2.2.2
+  links:
+    - [R1:Gi0/0, R2:Gi0/0, {bandwidth: 100000, delay: 10}]
+  hosts:
+    H1:
+      ip: 192.168.1.2/24
+      gateway: 192.168.1.1
+    H2:
+      ip: 192.168.2.2/24
+      gateway: 192.168.2.1
+
+protocols:
+  ospf:
+    neighbors:
+      - { router: R1, neighbor_rid: 2.2.2.2, port: Gi0/0, cost: 10 }
+      - { router: R2, neighbor_rid: 1.1.1.1, port: Gi0/0, cost: 10 }
+
+simulation:
+  until: 100
+  protocol_interval: 10
+
+traffic:
+  - type: ping
+    from: R1
+    to: 192.168.2.1
+    at: 50
+  - type: link_down
+    device: R1
+    port: Gi0/0
+    at: 80
+
+expect:
+  - rib_converged: [R1, R2]
