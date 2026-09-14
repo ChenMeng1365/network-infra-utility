@@ -1,14 +1,3 @@
----
-AIGC:
-  ContentProducer: '001191110102MAD55U9H0F10002'
-  ContentPropagator: '001191110102MAD55U9H0F10002'
-  Label: '1'
-  ProduceID: 'b2f96116-44bf-4de9-98ce-09f3024c1bc2'
-  PropagateID: 'b2f96116-44bf-4de9-98ce-09f3024c1bc2'
-  ReservedCode1: 'c2be245c-55df-4468-ae05-eb437b82973b'
-  ReservedCode2: 'c2be245c-55df-4468-ae05-eb437b82973b'
----
-
 # Network Infrastructure Utility
 
 重新编排 Network（`gem: network-utility`）。
@@ -49,9 +38,3 @@ bundle exec rake spec      # 跑原子能力
 bundle exec rake example   # 跑功能用例
 bundle exec rake           # 两者都跑（默认）
 ```
-
-## License
-
-采用 [GNU Affero General Public License v3.0 或更高版本](https://www.gnu.org/licenses/agpl-3.0.html)（AGPL-3.0-or-later），详见 [LICENSE.txt](LICENSE.txt)。
-
-> AI生成

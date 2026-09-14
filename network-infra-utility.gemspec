@@ -25,7 +25,7 @@ Gem::Specification.new do |spec|
   # bin/ 既放对外命令 (geo-api) 也放开发脚本 (console/setup)，
   # executables 显式声明，避免把开发脚本当作系统命令安装到用户 PATH。
   spec.bindir       = "bin"
-  spec.executables  = %w[geo-api geo-get geo-load geo-doc geo-update gen-get ngeo-get dns-query packbit probe simctl]
+  spec.executables  = %w[geo-api geo-get geo-load geo-doc geo-update gen-get ngeo-get dns-query packbit probe]
   spec.require_paths = ["document", "service", "service/ssh/lib", "service/simlab/lib", "support", "tool", "tool/probe/lib", "."]
 
   # 仿真场景 DSL 需要的运行时 gem
