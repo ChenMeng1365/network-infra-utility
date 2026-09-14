@@ -1,0 +1,144 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+# coding: utf-8
+#
+# gen-get — network-infra-utility 的互联网 IP 归属查询工具 (geo 系列)
+#
+# 调用免费互联网接口查询 IP 归属, 默认 ip-api.com 及其参数
+# (lang=zh-CN, fields=status,message,country,regionName,city,isp,as,query),
+# 内置 45 req/min 限速与本地 JSON 缓存。
+#
+# 用法:
+#   gen-get 8.8.8.8                    # 单 IP, 文字格式
+#   gen-get 8.8.8.8 -j                 # JSON 格式
+#   gen-get 1.1.1.1 8.8.8.8 ...       # 多 IP (自动限速)
+#   cat ips.txt | gen-get -j           # 从 stdin 逐行读 IP
+#   gen-get 8.8.8.8 --refresh         # 忽略缓存强刷
+#   gen-get --cache-stats              # 查看缓存统计
+#
+# 选项:
+#   -t, --text         文字格式输出 (默认)
+#   -j, --json         JSON 格式输出 (多 IP 时输出数组)
+#   --refresh          忽略缓存强制重查
+#   --no-cache         查询结果不写入缓存
+#   --api URL          覆盖默认接口 ({ip} 占位符)
+#   --timeout SEC      HTTP 超时秒数, 默认 10
+#   --cache-stats      查看缓存统计后退出
+#   -h, --help         显示帮助
+#   -v, --version      显示版本
+#
+# 退出码: 0 = 查询完成 (含确认无归属); 1 = IP 不合法; 2 = 互联网查询不可达
+#
+# 结果状态 (state):
+#   ok           互联网查询成功
+#   empty        互联网确认无归属 (如私有/保留地址)
+#   unreachable  互联网查询不可达 (网络不通/超时/限速), 返回空结果状态
+#   invalid      IP 不合法
+
+require "optparse"
+require "json"
+require_relative "../service/geoquery/geoquery"
+
+options = { format: :text, refresh: false, no_cache: false, timeout: 10, api: nil }
+parser = OptionParser.new do |opts|
+  opts.banner = <<~BAN
+    gen-get — 互联网 IP 归属查询工具 (network-infra-utility)
+
+    默认接口: ip-api.com 免费接口 (限 45 req/min, 无需 Key)
+    用法:
+      gen-get <IP> [options]
+      gen-get 8.8.8.8 -j
+      cat ips.txt | gen-get -j
+
+    选项:
+  BAN
+  opts.on("-t", "--text", "文字格式输出 (默认)")      { options[:format] = :text }
+  opts.on("-j", "--json", "JSON 格式输出")            { options[:format] = :json }
+  opts.on("--refresh", "忽略缓存强制重查")             { options[:refresh] = true }
+  opts.on("--no-cache", "查询结果不写入缓存")          { options[:no_cache] = true }
+  opts.on("--api URL", "覆盖默认互联网接口 ({ip} 占位符)") { |v| options[:api] = v }
+  opts.on("--timeout SEC", Integer, "HTTP 超时秒数 (默认 10)") { |v| options[:timeout] = v }
+  opts.on("--cache-stats", "查看缓存统计") do
+    cache = GeoQuery::Cache.new(File.join(GeoQuery::Cache.default_dir, "gen-cache.json"))
+    stats = cache.stats
+    puts "缓存文件: #{stats['file']}"
+    puts "缓存条目: #{stats['total']}    大小: #{stats['size_kb']} KB"
+    unless stats["states"].empty?
+      puts "状态分布: " + stats["states"].map { |k, v| "#{k}=#{v}" }.join("  ")
+    end
+    exit 0
+  end
+  opts.on("-v", "--version", "显示版本") do
+    require_relative "../version"
+    puts "gen-get #{NetworkInfraUtility::VERSION}"
+    exit 0
+  end
+  opts.on("-h", "--help", "显示帮助") do
+    puts opts
+    exit 0
+  end
+end
+parser.parse!
+
+# IP 来源: 命令行参数, 无参数且 stdin 非 TTY 时逐行读
+ips = ARGV.reject { |a| a.start_with?("-") }.map(&:strip).reject(&:empty?)
+if ips.empty? && !$stdin.tty?
+  ips = $stdin.each_line.map(&:strip).reject(&:empty?)
+end
+if ips.empty?
+  warn "用法: gen-get <IP> [options]  (或管道输入 IP 列表, 详见 --help)"
+  exit 1
+end
+
+cache = GeoQuery::Cache.new(File.join(GeoQuery::Cache.default_dir, "gen-cache.json"))
+client = GeoQuery::OnlineClient.new(api: options[:api], timeout: options[:timeout])
+
+results = ips.map do |ip|
+  result = nil
+  unless options[:refresh]
+    cached = cache.get(ip)
+    if cached
+      cached["source"] = "gen-get(cache)"
+      result = cached
+    end
+  end
+  result ||= client.lookup(ip)
+  cache.put(ip, result) unless options[:no_cache]
+  result
+end
+
+cache.save unless options[:no_cache]
+
+# ---- 输出 -------------------------------------------------------------------
+case options[:format]
+when :json
+  puts JSON.pretty_generate(results.size == 1 ? results.first : results)
+when :text
+  results.each do |r|
+    puts "查询 IP: #{r['ip']}    接口: ip-api.com (免费, 限 45 req/min)"
+    puts "-" * 64
+    case r["state"]
+    when "ok"
+      cached = r["cached"] ? "缓存命中" : "实时查询"
+      puts "国家: #{r['country']}    省份: #{r['province']}    城市: #{r['city']}"
+      puts "运营商: #{r['isp']}    用途: #{r['usage']}"
+      puts "ASN: #{r['asn'].empty? ? '未知' : "AS#{r['asn']}"} #{r['asn_org']}"
+      puts "状态: ok    来源: #{r['source']}    #{cached}"
+    when "empty"
+      puts "互联网确认无该 IP 归属数据 (#{r['message']})"
+      puts "状态: empty    来源: #{r['source']}"
+    when "unreachable"
+      puts "✗ 互联网查询不可达: #{r['message']}"
+      puts "状态: unreachable —— 无法连接互联网查询接口, 返回空结果"
+    when "invalid"
+      puts "✗ #{r['message']}"
+      puts "状态: invalid"
+    end
+    puts
+  end
+end
+
+# 退出码取最严重: unreachable(2) > invalid(1) > 其他(0)
+exit 2 if results.any? { |r| r["state"] == "unreachable" }
+exit 1 if results.any? { |r| r["state"] == "invalid" }
+exit 0

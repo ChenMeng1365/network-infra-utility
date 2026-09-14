@@ -15,12 +15,30 @@ module NetworkInfraUtility
   require_relative "support/basic/ip"
   require_relative "support/basic/as_num"
   require_relative "support/basic/mac_address"
+  require_relative "support/basic/packet"
+
+  # 路由原理层：依赖 support/basic
+  require_relative "support/routing/prefix"
+  require_relative "support/routing/lpm_trie"
+  require_relative "support/routing/rib"
+  require_relative "support/routing/static_route"
+  require_relative "support/routing/rip"
+  require_relative "support/routing/ospf"
+  require_relative "support/routing/bgp"
+
+  # 交换原理层：依赖 support/basic
+  require_relative "support/switching/mac_table"
+  require_relative "support/switching/frame_forward"
+  require_relative "support/switching/vlan"
+  require_relative "support/switching/stp"
 
   # 工具层：依赖 support
-  # require_relative "tool/xxx"
+  require_relative "tool/probe/lib/network_infra_utility/probe"
 
   # 服务层：依赖 tool / support
+  require_relative "service/simlab/lib/network_infra_utility/simlab"
   require_relative "service/ssh/lib/network_infra_utility/ssh"
+  require_relative "service/geoquery/geoquery"
 
   # 文档层：依赖 service / tool，最后加载
   # require_relative "document/xxx"

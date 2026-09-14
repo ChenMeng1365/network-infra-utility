@@ -1,0 +1,163 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+# coding: utf-8
+#
+# ngeo-get — network-infra-utility 的 IP 归属综合查询工具 (geo 系列)
+#
+# 综合 geo-get (本地 geo-api 服务) 与 gen-get (互联网 ip-api.com) 两个数据源:
+#   1. 本地接口可用时优先使用 geo-get 数据源
+#   2. 本地归属不满意 (省/市/ASN 缺失) 时, 自动调 gen-get 补互联网结果
+#   3. 互联网不通时返回"互联网查询不可达"状态; 本地部分结果仍保留
+#   4. 本地与互联网结果字段级叠加, 综合两方准确字段 (省/城市/用途 IDC·云)
+#
+# 结果状态可信度: unreachable < local-partial < empty < local < online < merged
+#   unreachable   本地无结果 + 互联网不可达 (空结果状态)
+#   local-partial 本地部分结果 + 互联网不可达/无补充
+#   empty         两方均确认无归属 (如私有地址)
+#   local         本地结果满意 (省/市/ASN 齐全)
+#   online        本地无结果, 纯互联网结果
+#   merged        本地 + 互联网叠加综合
+#
+# 用法:
+#   ngeo-get 111.8.44.6               # 综合查询, 文字格式
+#   ngeo-get 111.8.44.6 -j            # JSON 格式
+#   ngeo-get 1.1.1.1 8.8.8.8 ...     # 多 IP (在线部分自动限速)
+#   cat ips.txt | ngeo-get -j         # 从 stdin 逐行读 IP
+#   ngeo-get 111.8.44.6 --refresh     # 忽略缓存强刷
+#   ngeo-get 111.8.44.6 --no-local    # 跳过本地, 仅互联网
+#   ngeo-get --cache-stats            # 查看缓存统计
+#
+# 选项:
+#   -t, --text         文字格式输出 (默认)
+#   -j, --json         JSON 格式输出 (多 IP 时输出数组)
+#   --refresh          忽略缓存强制重查
+#   --no-local         跳过本地 geo-api, 仅查互联网
+#   --api URL          覆盖默认互联网接口 ({ip} 占位符)
+#   --geoapi URL       覆盖本地 geo-api 地址 (默认 http://127.0.0.1:9292)
+#   --timeout SEC      互联网 HTTP 超时秒数, 默认 10
+#   --cache-stats      查看缓存统计后退出
+#   -h, --help         显示帮助
+#   -v, --version      显示版本
+#
+# 退出码: 0 = 查询完成 (含 empty/local-partial); 1 = IP 不合法; 2 = 互联网不可达且本地无结果
+
+require "optparse"
+require "json"
+require_relative "../service/geoquery/geoquery"
+
+options = { format: :text, refresh: false, no_local: false, timeout: 10,
+            api: nil, geoapi: nil }
+parser = OptionParser.new do |opts|
+  opts.banner = <<~BAN
+    ngeo-get — IP 归属综合查询工具 (本地 geo-get + 互联网 gen-get)
+
+    策略: 本地优先 → 归属不满意时补互联网 → 两方准确字段叠加
+    用法:
+      ngeo-get <IP> [options]
+      ngeo-get 111.8.44.6 -j
+      cat ips.txt | ngeo-get -j
+
+    选项:
+  BAN
+  opts.on("-t", "--text", "文字格式输出 (默认)")      { options[:format] = :text }
+  opts.on("-j", "--json", "JSON 格式输出")            { options[:format] = :json }
+  opts.on("--refresh", "忽略缓存强制重查")             { options[:refresh] = true }
+  opts.on("--no-local", "跳过本地 geo-api, 仅查互联网") { options[:no_local] = true }
+  opts.on("--api URL", "覆盖默认互联网接口 ({ip} 占位符)") { |v| options[:api] = v }
+  opts.on("--geoapi URL", "覆盖本地 geo-api 地址")     { |v| options[:geoapi] = v }
+  opts.on("--timeout SEC", Integer, "互联网 HTTP 超时秒数 (默认 10)") { |v| options[:timeout] = v }
+  opts.on("--cache-stats", "查看缓存统计") do
+    cache = GeoQuery::Cache.new(File.join(GeoQuery::Cache.default_dir, "ngeo-cache.json"))
+    stats = cache.stats
+    puts "缓存文件: #{stats['file']}"
+    puts "缓存条目: #{stats['total']}    大小: #{stats['size_kb']} KB"
+    unless stats["states"].empty?
+      puts "状态分布: " + stats["states"].map { |k, v| "#{k}=#{v}" }.join("  ")
+    end
+    exit 0
+  end
+  opts.on("-v", "--version", "显示版本") do
+    require_relative "../version"
+    puts "ngeo-get #{NetworkInfraUtility::VERSION}"
+    exit 0
+  end
+  opts.on("-h", "--help", "显示帮助") do
+    puts opts
+    exit 0
+  end
+end
+parser.parse!
+
+# IP 来源: 命令行参数, 无参数且 stdin 非 TTY 时逐行读
+ips = ARGV.reject { |a| a.start_with?("-") }.map(&:strip).reject(&:empty?)
+if ips.empty? && !$stdin.tty?
+  ips = $stdin.each_line.map(&:strip).reject(&:empty?)
+end
+if ips.empty?
+  warn "用法: ngeo-get <IP> [options]  (或管道输入 IP 列表, 详见 --help)"
+  exit 1
+end
+
+ngeo = GeoQuery::NGeo.new(api: options[:api], geoapi_base: options[:geoapi],
+                          timeout: options[:timeout])
+
+results = ips.map do |ip|
+  ngeo.lookup(ip, refresh: options[:refresh], no_local: options[:no_local])
+end
+
+ngeo.save_cache
+
+# ---- 输出 -------------------------------------------------------------------
+STATE_LABEL = {
+  "merged" => "本地+互联网综合", "online" => "纯互联网",
+  "local" => "本地满意", "local-partial" => "本地部分 (互联网不可达/无补充)",
+  "empty" => "两方均无归属", "unreachable" => "互联网查询不可达",
+  "invalid" => "IP 不合法",
+}.freeze
+
+case options[:format]
+when :json
+  puts JSON.pretty_generate(results.size == 1 ? results.first : results)
+when :text
+  results.each do |r|
+    puts "查询 IP: #{r['ip']}    策略: 本地优先 → 不满意补互联网 → 字段叠加"
+    puts "-" * 64
+    case r["state"]
+    when "unreachable"
+      puts "✗ #{r['message']}"
+      puts "状态: unreachable (#{STATE_LABEL['unreachable']}) —— 本地无结果, 互联网不可达, 返回空结果状态"
+    when "invalid"
+      puts "✗ #{r['message']}"
+      puts "状态: invalid"
+    else
+      country = r["country"].empty? ? "未知" : r["country"]
+      province = r["province"].empty? ? "未知" : r["province"]
+      city = r["city"].empty? ? "未知" : r["city"]
+      puts "国家: #{country}    省份: #{province}    城市: #{city}"
+      puts "运营商: #{r['isp'].empty? ? '未知' : r['isp']}    用途: #{r['usage'].empty? ? '未知' : r['usage']}"
+      asn = r["asn"].empty? ? "未知" : "AS#{r['asn']}"
+      net = r["network"].empty? ? "" : "    网段: #{r['network']}"
+      puts "ASN: #{asn} #{r['asn_org']}#{net}"
+      cached = r["cached"] ? "缓存命中" : "实时查询"
+      puts "状态: #{r['state']} (#{STATE_LABEL[r['state']]})    来源: #{r['source']}    #{cached}"
+      unless r["message"].to_s.empty?
+        puts "提示: #{r['message']}"
+      end
+      if r["sources"].is_a?(Hash)
+        r["sources"].each do |name, info|
+          next unless info.is_a?(Hash)
+          label = name == "local" ? "本地 geo-get" : "互联网 gen-get"
+          verdict = info["verdict"] ? ", #{info['verdict']}" : ""
+          msg = info["message"].to_s.empty? ? "" : " (#{info['message']})"
+          puts "  · #{label}: #{info['state']}#{verdict}#{msg}"
+        end
+      end
+    end
+    puts
+  end
+end
+
+# 退出码取最严重: unreachable(2) > invalid(1) > 其他(0)
+exit 2 if results.any? { |r| r["state"] == "unreachable" }
+exit 1 if results.any? { |r| r["state"] == "invalid" }
+exit 0

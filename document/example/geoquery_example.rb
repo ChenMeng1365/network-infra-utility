@@ -1,24 +1,34 @@
-#coding:utf-8
-# geo-api-query-example — GeoAPI (geo-api 命令行服务) 接口调用示范
+# coding: utf-8
+# frozen_string_literal: true
+# geoquery_example — Geo 系列查询全景用例 (geo-api 服务 + GeoQuery 编排)
 # ============================================================
-# 本文件以"业务案例"为单位, 逐块展示 GeoAPI 各接口的调用方式与数据流转,
-# 每块发起真实 HTTP GET 调用并打印响应 JSON, 便于阅读:
+# 合并原 geo_api_query_example.rb (服务端接口) 与旧版 geoquery_example.rb
+# (客户端编排), 按"数据服务 → 查询编排"主线组织, 每块发起真实调用并打印
+# 响应, 便于阅读:
 #
-#   (一) 健康检查 /          → 确认服务就绪, 返回接口清单
-#   (二) ASN     /geo/asn    → 按 num 查地址段 / 按 addr 查所属 AS
-#   (三) City    /geo/city?id=    → 按 geoname_id 查城市级定位
-#   (四) City    /geo/city?addr=  → 按 IP 查城市归属 (慢, city-IPv4 加载约23s)
-#   (五) Country /geo/country?id= → 按 geoname_id 查国别
-#   (六) Country /geo/country?addr= → 按 IP 查国家归属
-#   (七) 未知路径             → 404 容错
+# Part A  geo-api 服务接口直连 (自动在 127.0.0.1:9399 起一个后台 Puma 服务)
+#   (一)   健康检查 /                → 确认服务就绪, 返回接口清单
+#   (二)   ASN     /geo/asn          → 按 num 查地址段 / 按 addr 查所属 AS
+#   (三)   City    /geo/city?id=     → 按 geoname_id 查城市级定位
+#   (四)   City    /geo/city?addr=   → 按 IP 查城市归属 (慢, city-IPv4 加载约23s)
+#   (五)   Country /geo/country?id=  → 按 geoname_id 查国别
+#   (六)   Country /geo/country?addr= → 按 IP 查国家归属
+#   (七)   未知路径                  → 404 容错
 #
-# 运行:
-#   ruby example/geo_api_query_example.rb                  # 快速 (跳过 city addr 慢块)
-#   ruby example/geo_api_query_example.rb FULL=1           # 含 city addr 慢块全量
-#   ruby example/geo_api_query_example.rb SLOW=1           # 同上, 仅启用慢块
-#   ruby example/geo_api_query_example.rb GEODB_DATA_DIR=D:/ipdb   # 覆盖数据目录
-#   ruby example/geo_api_query_example.rb PORT=9400        # 覆盖监听端口
+# Part B  GeoQuery 查询编排 (service/geoquery/, 连接 Part A 起的服务)
+#   (八)   LocalClient  → geo-get 底座: fetch_raw 原始接口 + lookup 归一化
+#   (九)   gen-get      → 互联网查询 (ip-api.com 免费, 限 45 req/min)
+#   (十)   ngeo-get     → 综合查询: 本地优先, 不满意补互联网, 字段叠加
+#   (十一) 状态机       → unreachable < local-partial < online 分支
 #
+# 运行 (项目根目录):
+#   ruby document/example/geoquery_example.rb                    # 快速 (跳过 city addr 慢块)
+#   ruby document/example/geoquery_example.rb FULL=1            # 含 city addr 慢块全量
+#   ruby document/example/geoquery_example.rb SLOW=1            # 同上, 仅启用慢块
+#   ruby document/example/geoquery_example.rb GEODB_DATA_DIR=D:/ipdb  PORT=9400
+#   ruby document/example/geoquery_example.rb GEOAPI=http://127.0.0.1:9292  # Part B 连已有服务
+#
+# 环境容忍: 外网不通时 (九)(十)(十一) 展示 unreachable 状态结果并继续, 不判失败。
 # 支撑代码 (服务启动 / HTTP 封装) 集中在文件后半, 不介入业务主线。
 # ============================================================
 
@@ -28,17 +38,24 @@ ARGV.each do |a|
   ENV[k] = v if k && v && k == k.upcase && !ENV.key?(k)
 end
 
-require_relative '../service/geodb/api'
-# 注: 不显式 require '../version'; 版本常量已由 api.rb → require 'network'
+# 优先加载工作区代码: 把仓库根插到 $LOAD_PATH 最前,
+# 使 api.rb → require 'network' 命中工作区 network.rb (统一入口已挂载 geoquery),
+# 避免与已安装 gem 重复加载产生常量重定义警告。
+REPO_ROOT = File.expand_path('../..', __dir__)
+$LOAD_PATH.unshift(REPO_ROOT) unless $LOAD_PATH.include?(REPO_ROOT)
+
+require_relative '../../service/geodb/api'
+# 注: 不显式 require version; 版本常量已由 api.rb → require 'network'
 # → network.rb → require_relative 'version' 加载, 显式重复 require 会与
 # 已安装 gem 的 version.rb 产生常量重定义, 并导致后台 Puma 线程启动阻塞。
+# geoquery 亦已由 network.rb 统一入口加载, 无需重复 require。
 require 'http_getter'
 require 'rack/handler/puma'
 require 'socket'
 require 'json'
 
 # ============================================================
-# 业务案例 —— 每块一个独立业务, 展示接口调用与数据流转
+# Part A — geo-api 服务接口 (GeoAPI 三接口的调用方式与数据流转)
 # ============================================================
 
 # ---- (一) 健康检查 ----
@@ -248,7 +265,100 @@ def case_unknown_path
 end
 
 # ============================================================
-# 以下是支撑代码 (服务启动 / HTTP 调用封装) —— 非业务主体, 折叠阅读
+# Part B — GeoQuery 查询编排 (geo-get / gen-get / ngeo-get 的底座)
+# ============================================================
+
+# ---- (八) LocalClient: geo-get 底座 ----
+# bin/geo-get 是 GeoQuery::LocalClient 的瘦封装:
+#   - fetch_raw: 返回各接口原始响应 (geo-get -j 的数据来源)
+#   - lookup:    归一化为统一 schema (ngeo 内部同款)
+def case_local_client(base)
+  banner '(八) LocalClient — geo-get 底座 (fetch_raw / lookup)'
+  local = GeoQuery::LocalClient.new(base: base)
+
+  # 8.1 fetch_raw: 原始接口响应, 支持接口子集
+  puts '8.1  fetch_raw("8.8.8.8", endpoints: %i[asn]) → 原始 ASN 响应'
+  raw = local.fetch_raw('8.8.8.8', endpoints: %i[asn])
+  asn = raw[:asn]
+  puts "     AS#{asn['autonomous_system_number']} #{asn['autonomous_system_organization']}  网段 #{asn['network']}"
+
+  # 8.2 lookup: 统一 schema (省/市/ASN/运营商/用途)
+  puts '8.2  lookup("219.140.0.1") → 统一 schema (本地省市 ASN 齐全)'
+  r = local.lookup('219.140.0.1')
+  puts "     state=#{r['state']}  #{r['country']} #{r['province']} #{r['city']}  #{r['isp']}  #{r['usage']}"
+
+  # 8.3 lookup: 本地省市缺失 (由 (十) 的 ngeo 补互联网)
+  puts '8.3  lookup("111.8.44.6") → 省市缺失 (归属不满意)'
+  r = local.lookup('111.8.44.6')
+  puts "     state=#{r['state']}  province=#{r['province'].empty? ? '(缺)' : r['province']}  city=#{r['city'].empty? ? '(缺)' : r['city']}  asn=#{r['asn']}"
+end
+
+# ---- (九) gen-get: 互联网查询 ----
+# GeoQuery::OnlineClient: ip-api.com 免费接口, 内置 45 req/min 限速。
+# 外网不通时展示 unreachable 状态并继续, 不判失败。
+def case_gen_get
+  banner '(九) gen-get — 互联网查询 (ip-api.com 免费, 限 45 req/min)'
+  online = GeoQuery::OnlineClient.new(timeout: 8)
+  %w[8.8.8.8 114.114.114.114 10.20.30.40].each do |ip|
+    r = online.lookup(ip)
+    if r['state'] == 'unreachable'
+      puts "#{ip}: 互联网查询不可达 (#{r['message']}), 继续后续用例"
+      next
+    end
+    show('ip' => ip, 'state' => r['state'], 'country' => r['country'],
+         'province' => r['province'], 'city' => r['city'],
+         'isp' => r['isp'], 'usage' => r['usage'],
+         'asn' => r['asn'], 'asn_org' => r['asn_org'],
+         'message' => r['message'])
+  end
+end
+
+# ---- (十) ngeo-get: 综合查询 ----
+# GeoQuery::NGeo: 本地 geo-get 优先 → 归属不满意补互联网 → 字段级叠加。
+def case_ngeo_get(base, cache_dir)
+  banner '(十) ngeo-get — 本地优先, 不满意补互联网, 字段叠加'
+  ngeo = GeoQuery::NGeo.new(geoapi_base: base, cache_dir: cache_dir)
+
+  # 219.140.0.1  本地省市齐全 → local
+  # 111.8.44.6   本地省市缺失 → 互联网补全 → merged
+  %w[219.140.0.1 111.8.44.6].each do |ip|
+    r = ngeo.lookup(ip, refresh: true)
+    show('ip' => ip, 'state' => r['state'], 'country' => r['country'],
+         'province' => r['province'], 'city' => r['city'],
+         'isp' => r['isp'], 'usage' => r['usage'],
+         'network' => r['network'], 'source' => r['source'],
+         'sources' => r['sources'])
+  end
+  ngeo.save_cache
+end
+
+# ---- (十一) 状态机: 互联网不可达 ----
+# 用不通的接口地址模拟断网 (TEST-NET 保留段), 演示状态优先级链:
+#   unreachable (本地空+互联网不可达) < local-partial (本地部分结果保留)
+def case_state_machine(base, cache_dir)
+  banner '(十一) 状态机 — 互联网不可达时: unreachable < local-partial'
+  broken = GeoQuery::NGeo.new(
+    geoapi_base: base,
+    api: 'http://192.0.2.1/json/{ip}?lang=zh-CN',
+    timeout: 2,
+    cache_dir: cache_dir + '-broken',
+  )
+
+  # 本地有部分结果 → local-partial (保留本地字段, 标注不可达)
+  r1 = broken.lookup('111.8.44.6', refresh: true)
+  puts "本地部分 + 互联网不可达 → #{r1['state']} (province=#{r1['province'].empty? ? '缺' : r1['province']}, asn=#{r1['asn']})"
+  puts "  message: #{r1['message']}"
+
+  # 本地空 + 互联网不可达 → unreachable (空结果状态, 价值最低)
+  r2 = broken.lookup('10.20.30.40', refresh: true)
+  puts "本地空 + 互联网不可达 → #{r2['state']} (全部字段为空)"
+
+  puts
+  puts "状态优先级链: unreachable(#{r2['state'] == 'unreachable' ? '✓' : '✗'}) < local-partial(#{r1['state'] == 'local-partial' ? '✓' : '✗'}) < online/merged/local"
+end
+
+# ============================================================
+# 以下是支撑代码 (配置 / HTTP 调用封装 / 服务启动) —— 非业务主体, 折叠阅读
 # ============================================================
 
 # ---- 配置 ----
@@ -265,6 +375,13 @@ IP_AVAILABLE = begin
 rescue NameError
   false
 end
+
+# Part B 连接的本地服务: 优先 GEOAPI 环境变量 (如连已运行的 9292 服务),
+# 默认连本例 Part A 起的服务。
+GEOAPI_BASE_FOR_QUERY = ENV['GEOAPI'] || BASE
+
+# Part B 缓存目录 (默认 .temp/, 不污染项目根目录)
+QUERY_CACHE_DIR = ENV['CACHE_DIR'] || File.join(__dir__, '..', '..', '.temp', 'geoquery-example-cache')
 
 # ---- 轻量 HTTP 封装 ----
 # HttpGetter.get(url, params, headers, opts): 2xx 返回解析后对象, 4xx/5xx 抛 HttpError。
@@ -296,6 +413,10 @@ end
 
 def banner(title); puts "\n===== #{title} =====" end
 
+def show(result)
+  puts JSON.pretty_generate(result)
+end
+
 # ---- 启动后台 Puma 服务 (抑制启动日志) ----
 $stderr_saved = $stderr.dup
 Thread.new do
@@ -308,13 +429,16 @@ rescue => e
   abort e.message
 end
 $stderr.reopen($stderr_saved)
-puts "geo-api-query-example  v#{NetworkInfraUtility::VERSION}"
+puts "geoquery-example  v#{NetworkInfraUtility::VERSION}"
 puts "GeoAPI 服务已启动: #{BASE}  数据目录: #{DATA_DIR}"
+puts "Part B 查询编排连接: #{GEOAPI_BASE_FOR_QUERY}"
 
 # ============================================================
-# 执行入口 —— 按业务顺序运行
+# 执行入口 —— 按 Part A → Part B 顺序运行
 # ============================================================
 t0 = Time.now
+
+# ---- Part A: 服务接口 ----
 case_health
 case_asn
 case_city_by_id
@@ -327,5 +451,12 @@ end
 case_country_by_id
 case_country_by_addr
 case_unknown_path
+
+# ---- Part B: 查询编排 ----
+case_local_client(GEOAPI_BASE_FOR_QUERY)
+case_gen_get
+case_ngeo_get(GEOAPI_BASE_FOR_QUERY, QUERY_CACHE_DIR)
+case_state_machine(GEOAPI_BASE_FOR_QUERY, QUERY_CACHE_DIR)
+
 puts "\n===== 完成, 耗时 #{(Time.now - t0).round(1)}s ====="
 exit!(0)   # 强制退出后台 Puma 线程, 避免进程挂起
