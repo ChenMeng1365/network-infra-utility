@@ -6,7 +6,14 @@
 #
 # 数据文件目录通过环境变量 GEODB_DATA_DIR 指定，默认 ./geodb/
 # 用 -d/--data-dir 参数 (命令行) 或设置该环境变量可指向任意位置。
+#
+# GEO_CACHE 外带缓存 (bin/geo-api -a 或环境变量 GEODB_CACHE_DIR 指定目录):
+#   目录内 geocacheYYYYMMDD.json (ngeo-get -c 产出) 作为缓存定位信息。
+#   addr 查询按 GEODB_CACHE_ORDER 顺位 (默认 local,cache) 编排:
+#   先查本地 GeoLite2 库, 查不到时用缓存记录兑底 (统一 schema 转为
+#   各接口的 GeoLite2 风格响应, 对客户端透明)。目录内文件增删改自动感知。
 ['cc','CasetDown/casetdown','network','roda'].each{|mod| require mod}
+require_relative '../geoquery/geo_cache'
 
 module GeoDB
   module_function
@@ -26,6 +33,26 @@ module GeoDB
   # asn 反向索引: autonomous_system_number => [record, ...]
   @asn_index = {}
   @lock = Mutex.new
+  # GEO_CACHE 外带缓存实例 (GEODB_CACHE_DIR 设置时启用)
+  @geo_cache = nil
+
+  # ---- GEO_CACHE 外带缓存 -------------------------------------------------
+
+  # 缓存实例 (惰性建立; 目录不存在时仍建立, 后续创建/产出可自动感知)
+  def geo_cache
+    @geo_cache ||= begin
+      d = ENV['GEODB_CACHE_DIR'].to_s
+      d.empty? ? nil : GeoQuery::GeoCache.new(d)
+    end
+  end
+
+  # 查询顺位: local (GeoLite2 库) 与 cache (GEO_CACHE) 的适用顺序。
+  # GEODB_CACHE_ORDER 指定 (bin/geo-api --priority), 默认 local,cache。
+  def cache_order
+    parts = ENV['GEODB_CACHE_ORDER'].to_s.split(/[,\s]+/).map(&:strip).reject(&:empty?)
+    parts = %w[local cache] if parts.empty?
+    parts.select { |p| %w[local cache].include?(p) }.uniq
+  end
 
   # ---- 加载 ---------------------------------------------------------------
 
@@ -112,6 +139,44 @@ module GeoDB
     (number >= s && number <= e) ? r : nil
   end
 
+  # ---- addr 查询编排 (本地库 + GEO_CACHE) ---------------------------------
+
+  # 按 cache_order 顺位查本地库与 GEO_CACHE (kind: :asn/:city/:country)
+  # 返回: :invalid(IP不合法) / nil(无结果) / record
+  def lookup_addr(kind, addr)
+    num = ip_number(addr)
+    return :invalid unless num
+    cache_order.each do |src|
+      r = src == 'cache' ? cache_lookup(kind, addr) : local_lookup(kind, addr, num)
+      return r if r
+    end
+    nil
+  end
+
+  # 本地 GeoLite2 库查询 (原 addr 查询逻辑)
+  def local_lookup(kind, addr, num)
+    case kind
+    when :asn
+      find_range('asn', num)
+    when :city
+      r = find_range(ipv6?(addr) ? 'city-IPv6' : 'city-IPv4', num)
+      r ? enrich(r, 'geo-city') : nil
+    when :country
+      r = find_range(ipv6?(addr) ? 'country-IPv6' : 'country-IPv4', num)
+      r ? enrich(r, 'geo-country') : nil
+    end
+  end
+
+  # GEO_CACHE 兑底: 命中则把统一 schema 转为该接口的 GeoLite2 风格响应
+  # (对应字段缺失时 to_geolite 返回 nil, 继续下一数据源)
+  def cache_lookup(kind, addr)
+    gc = geo_cache
+    return nil unless gc
+    hit = gc.lookup(addr)
+    return nil unless hit
+    GeoQuery::GeoCache.to_geolite(kind, hit)
+  end
+
   # ---- ASN 接口 (1) -------------------------------------------------------
 
   # /geo/asn?num=XXX  查出该 AS 的所有地址段
@@ -120,12 +185,10 @@ module GeoDB
     @asn_index[num.to_s] || []
   end
 
-  # /geo/asn?addr=X.X.X.X  按 IP 查所属 AS
+  # /geo/asn?addr=X.X.X.X  按 IP 查所属 AS (本地库 → GEO_CACHE 兑底)
   # 返回: :invalid(IP不合法) / nil(无结果) / record
   def asn_by_addr(addr)
-    num = ip_number(addr)
-    return :invalid unless num
-    find_range('asn', num)
+    lookup_addr(:asn, addr)
   end
 
   # ---- City 接口 (2)(3) ---------------------------------------------------
@@ -138,15 +201,11 @@ module GeoDB
     g ? g[id.to_s] : nil
   end
 
-  # /geo/city?addr=X.X.X.X  先查 city-IPv4/city-IPv6, 再关联 geo-city
+  # /geo/city?addr=X.X.X.X  先查 city-IPv4/city-IPv6, 再关联 geo-city;
+  # 无结果时 GEO_CACHE 兑底
   # 返回: :invalid / nil / enriched_record
   def city_by_addr(addr)
-    num = ip_number(addr)
-    return :invalid unless num
-    name = ipv6?(addr) ? 'city-IPv6' : 'city-IPv4'
-    r = find_range(name, num)
-    return nil unless r
-    enrich(r, 'geo-city')
+    lookup_addr(:city, addr)
   end
 
   # ---- Country 接口 (4)(5) ------------------------------------------------
@@ -158,14 +217,10 @@ module GeoDB
     g ? g[id.to_s] : nil
   end
 
-  # /geo/country?addr=X.X.X.X  先查 country-IPv4/country-IPv6, 再关联 geo-country
+  # /geo/country?addr=X.X.X.X  先查 country-IPv4/country-IPv6, 再关联
+  # geo-country; 无结果时 GEO_CACHE 兑底
   def country_by_addr(addr)
-    num = ip_number(addr)
-    return :invalid unless num
-    name = ipv6?(addr) ? 'country-IPv6' : 'country-IPv4'
-    r = find_range(name, num)
-    return nil unless r
-    enrich(r, 'geo-country')
+    lookup_addr(:country, addr)
   end
 
   # ---- 关联聚合 -----------------------------------------------------------
@@ -203,15 +258,18 @@ class GeoAPI < Roda
 
   route do |r|
     r.root do
-      {
+      info = {
         service: 'GeoDB API',
         data_dir: GeoDB.data_dir,
+        cache_order: GeoDB.cache_order.join(','),
         endpoints: {
           'asn'     => '/geo/asn?num=XXX | /geo/asn?addr=X.X.X.X',
           'city'    => '/geo/city?id=XXX | /geo/city?addr=X.X.X.X',
           'country' => '/geo/country?id=XXX | /geo/country?addr=X.X.X.X'
         }
       }
+      info[:cache_dir] = GeoDB.geo_cache.dir if GeoDB.geo_cache
+      info
     end
 
     r.on 'geo' do

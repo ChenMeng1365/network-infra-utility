@@ -1,3 +1,13 @@
+---
+AIGC:
+  ContentProducer: '001191110102MAD55U9H0F10002'
+  ContentPropagator: '001191110102MAD55U9H0F10002'
+  Label: '1'
+  ProduceID: 'f8a5515f-8063-4c0f-82de-6f5d3921a8d0'
+  PropagateID: 'f8a5515f-8063-4c0f-82de-6f5d3921a8d0'
+  ReservedCode1: 'e9dc29f2-2c00-4f09-a5c5-2d487e36268f'
+  ReservedCode2: 'e9dc29f2-2c00-4f09-a5c5-2d487e36268f'
+---
 
 # GeoAPI 测试用例
 
@@ -219,6 +229,54 @@ IP 合法性说明：含 `:` 按 IPv6 解析，否则按 IPv4 解析；非法地
 
 ---
 
+## (7) GEO_CACHE 外带缓存兜底 — `geo-api -a`
+
+服务端以 `geo-api -d GEODB_PATH -a GEO_CACHE [--priority local,cache]` 启动后，
+`addr` 类查询按顺位编排：先查本地 GeoLite2 库，本地查不到（404）时用 GEO_CACHE
+目录内 `geocacheYYYYMMDD.json`（`ngeo-get -c` 产出）的缓存定位信息兜底，统一
+schema 转换为各接口的 GeoLite2 风格响应，并附加 `"cached": true` 标记。
+`id` / `num` 类查询不适用缓存（非 IP 键）。目录内文件增删改自动感知，无需重启。
+
+### 7.1 启动与根路由
+
+| # | 命令 | 预期结果 |
+|---|------|----------|
+| 7.1.1 | `geo-api -d ./geodb -a ./GEO_CACHE` | 启动横幅显示缓存目录与文件数、兑底顺位 `local,cache` |
+| 7.1.2 | `curl -s "localhost:9292/"` | 200，含 `cache_dir` 与 `cache_order:"local,cache"` |
+| 7.1.3 | `geo-api -a ./不存在的目录` | 警告但继续启动（目录后续创建自动感知） |
+| 7.1.4 | `geo-api --priority cache,local` | 兑底顺位改为缓存优先 |
+
+### 7.2 缓存兜底查询
+
+预置 `GEO_CACHE/geocache20260101.json`：
+
+```json
+{ "203.0.113.7": { "state": "local", "country": "中国", "province": "浙江",
+  "city": "杭州", "asn": "4134", "asn_org": "Chinanet",
+  "network": "203.0.113.0/24", "ts": 100 } }
+```
+
+| # | curl 命令 | 预期结果 |
+|---|-----------|----------|
+| 7.2.1 | `curl -s "localhost:9292/geo/city?addr=203.0.113.7"` | 200，`geoname.subdivision_1_name:"浙江"`、`geoname.city_namezh:"杭州"`、`cached:true`（本地库无此 TEST-NET-3 地址，走缓存兜底）|
+| 7.2.2 | `curl -s "localhost:9292/geo/asn?addr=203.0.113.7"` | 200，`autonomous_system_number:"4134"`、`cached:true` |
+| 7.2.3 | `curl -s "localhost:9292/geo/country?addr=203.0.113.7"` | 200，`geoname.country_name:"中国"`、`cached:true` |
+| 7.2.4 | `curl -s "localhost:9292/geo/asn?addr=8.8.8.8"` | 200，Google LLC，**无** `cached` 字段（本地库命中，不走缓存，local 优先）|
+| 7.2.5 | 缓存记录 `state:"empty"` 的 IP 查 city | 404（缓存确认无归属，无兜底数据）|
+| 7.2.6 | 缓存记录无 `asn` 字段的 IP 查 asn | 404（对应字段缺失，该接口无数据）|
+
+### 7.3 兜底响应结构（缓存命中）
+
+```json
+{
+  "network": "203.0.113.0/24",
+  "geoname": { "country_name": "中国", "subdivision_1_name": "浙江", "city_namezh": "杭州" },
+  "cached": true
+}
+```
+
+---
+
 ## 备注
 
 1. **ASN 的 `num` 非数字**：需求第(1)点只要求 city/country 的 id 做数字校验，未规定 asn 的 num。当前实现在 `num=abc` 时返回 `count:0`（空结果，状态 200）。如需返回 `400 ASN编号不合法`，可在 `api.rb` 中加一行校验。
@@ -226,3 +284,9 @@ IP 合法性说明：含 `:` 按 IPv6 解析，否则按 IPv4 解析；非法地
 2. **city-IPv6.json**：当前 `geodb/` 目录下已生成此文件，IPv6 city 查询可正常命中。文件缺失时服务端会容错返回 `无结果`（404），不影响其他接口。
 
 3. **加载耗时（首次，含 JSON 解析）**：asn 约 3.5s / country-IPv4 约 2.9s / country-IPv6 约 3.6s / city-IPv4 约 22.8s，之后常驻内存走缓存，查询耗时约 0ms。
+
+4. **GEO_CACHE 与服务端缓存（`@store`）的区别**：`@store` 是数据文件加载内存缓存（进程内常驻）；GEO_CACHE 是外带定位信息缓存目录（ngeo-get 产出的查询结果），用于 addr 查询兜底，两者互不影响。
+
+5. **geo-api 的顺位参数是 `--priority`**（不是 `-p`）：`-p` 已被监听端口占用。服务端仅支持 `local,cache` 排列（无互联网源）；客户端 `ngeo-get -p` 支持 `cache,local,internet` 三源排列。
+
+> AI生成

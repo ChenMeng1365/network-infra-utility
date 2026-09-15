@@ -99,6 +99,12 @@ RSpec.describe GeoQuery do
       expect(merged["network"]).to eq("1.2.3.0/24")
     end
 
+    it "网段: base 空时取 supp (缓存网段补给本地)" do
+      merged = GeoQuery::Merge.fields(local.merge("network" => ""), online.merge("network" => "9.9.9.0/24"))
+      expect(merged["network"]).to eq("9.9.9.0/24")
+      expect(merged["province"]).to eq("湖北")
+    end
+
     it "运营商按合并后组织名重新归一化" do
       merged = GeoQuery::Merge.fields(local.merge("asn_org" => "CHINATELECOM Hubei province 5G network"),
                             online)
@@ -129,6 +135,150 @@ RSpec.describe GeoQuery do
         cache = described_class.new(File.join(dir, "c.json"))
         cache.put("1.2.3.4", { "state" => "unreachable" })
         expect(cache.get("1.2.3.4")).to be_nil
+      end
+    end
+  end
+
+  # ---- GEO_CACHE 外带缓存 ---------------------------------------------------
+  describe GeoQuery::GeoCache do
+    def write_cache(dir, file, entries)
+      FileUtils.mkdir_p(dir)
+      File.binwrite(File.join(dir, file), JSON.generate(entries))
+    end
+
+    def entry(overrides = {})
+      { "state" => "local", "country" => "中国", "province" => "湖北",
+        "city" => "武汉", "isp" => "电信", "asn" => "4134",
+        "asn_org" => "Chinanet", "network" => "1.2.3.0/24",
+        "usage" => "运营商" }.merge(overrides)
+    end
+
+    describe ".parse_order" do
+      it "合法顺位解析" do
+        expect(described_class.parse_order("cache,local,internet")).to eq(%w[cache local internet])
+        expect(described_class.parse_order("local,internet,cache")).to eq(%w[local internet cache])
+        expect(described_class.parse_order("local internet cache")).to eq(%w[local internet cache])
+        expect(described_class.parse_order("local")).to eq(%w[local])
+      end
+
+      it "非法顺位返回 nil (重复/未知源/为空)" do
+        expect(described_class.parse_order("local,local")).to be_nil
+        expect(described_class.parse_order("local,xxx")).to be_nil
+        expect(described_class.parse_order("")).to be_nil
+        expect(described_class.parse_order(nil)).to be_nil
+      end
+    end
+
+    describe ".to_geolite" do
+      it "转换为各接口的 GeoLite2 风格响应" do
+        hit = entry
+        city = described_class.to_geolite(:city, hit)
+        expect(city["geoname"]["subdivision_1_name"]).to eq("湖北")
+        expect(city["geoname"]["city_namezh"]).to eq("武汉")
+        expect(city["cached"]).to be true
+        expect(city["network"]).to eq("1.2.3.0/24")
+
+        country = described_class.to_geolite(:country, hit)
+        expect(country["geoname"]["country_name"]).to eq("中国")
+
+        asn = described_class.to_geolite(:asn, hit)
+        expect(asn["autonomous_system_number"]).to eq("4134")
+        expect(asn["autonomous_system_organization"]).to eq("Chinanet")
+      end
+
+      it "对应字段缺失返回 nil (视作该接口无数据)" do
+        expect(described_class.to_geolite(:asn, entry("asn" => ""))).to be_nil
+        expect(described_class.to_geolite(:city, entry("province" => "", "city" => ""))).to be_nil
+        expect(described_class.to_geolite(:country, entry("country" => ""))).to be_nil
+      end
+    end
+
+    it "lookup: 单文件命中附加 cached, 未命中返回 nil" do
+      Dir.mktmpdir do |dir|
+        write_cache(dir, "geocache20260901.json",
+                    { "1.2.3.4" => entry.merge("ts" => 100) })
+        gc = described_class.new(dir)
+        hit = gc.lookup("1.2.3.4")
+        expect(hit["province"]).to eq("湖北")
+        expect(hit["cached"]).to be true
+        expect(gc.lookup("5.6.7.8")).to be_nil
+      end
+    end
+
+    it "lookup: 非法文件名不参与 (geocache.json / 14 位标签)" do
+      Dir.mktmpdir do |dir|
+        write_cache(dir, "geocache.json", { "1.2.3.4" => entry })
+        write_cache(dir, "geocache20260901123456.json", { "1.2.3.4" => entry })
+        write_cache(dir, "other.json", { "1.2.3.4" => entry })
+        expect(described_class.new(dir).lookup("1.2.3.4")).to be_nil
+      end
+    end
+
+    it "lookup: 多文件命中取 ts 最新; 目录新增文件自动感知" do
+      Dir.mktmpdir do |dir|
+        write_cache(dir, "geocache20260901.json",
+                    { "1.2.3.4" => entry("city" => "旧城市", "ts" => 100) })
+        gc = described_class.new(dir)
+        expect(gc.lookup("1.2.3.4")["city"]).to eq("旧城市")
+
+        write_cache(dir, "geocache20260910.json",
+                    { "1.2.3.4" => entry("city" => "新城市", "ts" => 200) })
+        expect(gc.lookup("1.2.3.4")["city"]).to eq("新城市")
+      end
+    end
+
+    it "put_batch: 写入当天文件, 已有文件合并覆盖同 IP" do
+      Dir.mktmpdir do |dir|
+        write_cache(dir, "geocache#{Time.now.strftime('%Y%m%d')}.json",
+                    { "1.2.3.4" => entry("city" => "旧值", "ts" => 100) })
+        out = described_class.new(dir).put_batch(
+          [{ "ip" => "1.2.3.4", "state" => "merged", "country" => "中国",
+             "province" => "北京", "city" => "新值" }])
+        expect(out["entries"]).to eq(1)
+        data = JSON.parse(File.binread(out["file"]))
+        expect(data["1.2.3.4"]["city"]).to eq("新值")
+        expect(data["1.2.3.4"]["ts"]).to be > 100
+      end
+    end
+
+    it "put_batch: 不可缓存状态 (unreachable/invalid) 不落盘" do
+      Dir.mktmpdir do |dir|
+        out = described_class.new(dir).put_batch(
+          [{ "ip" => "1.2.3.4", "state" => "unreachable" },
+           { "ip" => "999.1.1.1", "state" => "local" }])
+        expect(out).to be_nil
+        expect(Dir.children(dir)).to be_empty
+      end
+    end
+
+    it "merge!: 合并全部缓存文件, 同 IP 取 ts 最新, 生成新文件" do
+      Dir.mktmpdir do |dir|
+        write_cache(dir, "geocache20260901.json",
+                    { "1.2.3.4" => entry("city" => "旧值", "ts" => 100),
+                      "5.6.7.8" => entry.merge("ts" => 100) })
+        write_cache(dir, "geocache20260910.json",
+                    { "1.2.3.4" => entry("city" => "新值", "ts" => 200) })
+        stats = described_class.new(dir).merge!
+        expect(stats["files"]).to eq(2)
+        expect(stats["entries"]).to eq(2)
+        expect(File.basename(stats["output"]))
+          .to eq("geocache#{Time.now.strftime('%Y%m%d')}.json")
+        data = JSON.parse(File.binread(stats["output"]))
+        expect(data["1.2.3.4"]["city"]).to eq("新值")
+        expect(data["5.6.7.8"]["province"]).to eq("湖北")
+      end
+    end
+
+    it "stats: 目录统计" do
+      Dir.mktmpdir do |dir|
+        write_cache(dir, "geocache20260901.json",
+                    { "1.2.3.4" => entry.merge("ts" => 100),
+                      "5.6.7.8" => entry("state" => "empty").merge("ts" => 100) })
+        stats = described_class.new(dir).stats
+        expect(stats["files"]).to eq(1)
+        expect(stats["entries"]).to eq(2)
+        expect(stats["states"]["local"]).to eq(1)
+        expect(stats["states"]["empty"]).to eq(1)
       end
     end
   end
@@ -346,6 +496,214 @@ RSpec.describe GeoQuery do
       4.times { ngeo.lookup("1.2.3.4") }
       # 第 4 次触发熔断, 在线查询只发出 3 次
       expect(calls.size).to eq(3)
+    end
+  end
+
+  # ---- ngeo 三源顺位 (GEO_CACHE) ---------------------------------------------
+  describe GeoQuery::NGeo do
+    let(:tmpdir) { Dir.mktmpdir }
+    let(:cache_dir) { File.join(tmpdir, "geocache") }
+    let(:ngeo) do
+      described_class.new(cache_file: File.join(tmpdir, "ngeo.json"),
+                          geo_cache_dir: cache_dir)
+    end
+
+    def stub_local(result)
+      stub = Object.new
+      calls = []
+      stub.define_singleton_method(:lookup) { |_ip| calls << _ip; result }
+      stub.define_singleton_method(:calls) { calls }
+      ngeo.instance_variable_set(:@local, stub)
+      stub
+    end
+
+    def stub_online(result = nil, &blk)
+      stub = Object.new
+      if blk
+        stub.define_singleton_method(:lookup, &blk)
+      else
+        stub.define_singleton_method(:lookup) { |_ip| result }
+      end
+      ngeo.instance_variable_set(:@online, stub)
+      stub
+    end
+
+    def local_result(overrides = {})
+      { "ip" => "1.2.3.4", "state" => "ok", "message" => "",
+        "country" => "中国", "province" => "", "city" => "",
+        "isp" => "电信", "asn" => "4134", "asn_org" => "Chinanet",
+        "network" => "1.2.3.0/24", "usage" => "运营商",
+        "source" => "geo-get(geo-api)" }.merge(overrides)
+    end
+
+    def online_result(overrides = {})
+      { "ip" => "1.2.3.4", "state" => "ok", "message" => "",
+        "country" => "中国", "province" => "湖北", "city" => "武汉",
+        "isp" => "电信", "asn" => "", "asn_org" => "",
+        "network" => "", "usage" => "运营商",
+        "source" => "gen-get(ip-api.com)" }.merge(overrides)
+    end
+
+    def write_cache_entry(ip, record, file = "geocache20260901.json")
+      require "fileutils"
+      FileUtils.mkdir_p(cache_dir)
+      path = File.join(cache_dir, file)
+      data = File.exist?(path) ? JSON.parse(File.binread(path)) : {}
+      data[ip] = record.merge("ts" => record["ts"] || 100)
+      File.binwrite(path, JSON.generate(data))
+    end
+
+    # 给任意 NGeo 实例挂 local/online stub (闭包捕获结果, 不依赖块内作用域)
+    def stub_pair(target, local_res, online_res = nil, &online_blk)
+      lstub = Object.new
+      lstub.define_singleton_method(:lookup) { |_ip| local_res }
+      target.instance_variable_set(:@local, lstub)
+      ostub = Object.new
+      if online_blk
+        ostub.define_singleton_method(:lookup, &online_blk)
+      else
+        ostub.define_singleton_method(:lookup) { |_ip| online_res }
+      end
+      target.instance_variable_set(:@online, ostub)
+    end
+
+    after { FileUtils.remove_entry(tmpdir) }
+
+    it "默认顺位: 缓存命中且满意 → state=cache, 不查本地/互联网" do
+      write_cache_entry("1.2.3.4", {
+        "state" => "local", "country" => "中国", "province" => "湖北",
+        "city" => "武汉", "asn" => "4134", "asn_org" => "Chinanet",
+        "network" => "1.2.3.0/24" })
+      local = stub_local(local_result)
+      stub_online(online_result)
+
+      r = ngeo.lookup("1.2.3.4")
+      expect(r["state"]).to eq("cache")
+      expect(r["cached"]).to be true
+      expect(r["province"]).to eq("湖北")
+      expect(r["network"]).to eq("1.2.3.0/24")
+      expect(local.calls).to be_empty       # 本地未查询
+      expect(r["sources"]["local"]["state"]).to eq("skipped")
+      expect(r["sources"]["online"]["state"]).to eq("skipped")
+    end
+
+    it "默认顺位: 缓存 miss → 本地满意 → state=local" do
+      local = stub_local(local_result("province" => "湖北", "city" => "武汉"))
+      stub_online(online_result)
+      r = ngeo.lookup("9.9.9.9")
+      expect(r["state"]).to eq("local")
+      expect(r["sources"]["cache"]["state"]).to eq("miss")
+      expect(local.calls).to eq(["9.9.9.9"])
+    end
+
+    it "缓存部分 + 本地补全 → 多源叠加 merged" do
+      write_cache_entry("1.2.3.4", {
+        "state" => "local", "country" => "中国", "province" => "", "city" => "",
+        "asn" => "4134", "asn_org" => "Chinanet", "network" => "1.2.3.0/24" })
+      stub_local(local_result("province" => "湖北", "city" => "武汉"))
+      stub_online(online_result)
+
+      r = ngeo.lookup("1.2.3.4")
+      expect(r["state"]).to eq("merged")
+      expect(r["source"]).to eq("ngeo(geo-cache+geo-get)")
+      expect(r["province"]).to eq("湖北")
+      expect(r["network"]).to eq("1.2.3.0/24")
+    end
+
+    it "-p local,internet,cache: 本地满意 → 不查缓存 (顺序生效)" do
+      write_cache_entry("1.2.3.4", {
+        "state" => "local", "province" => "缓存省",
+        "city" => "缓存市", "asn" => "4134" })
+      ordered = described_class.new(
+        cache_file: File.join(tmpdir, "n2.json"),
+        geo_cache_dir: cache_dir, order: "local,internet,cache")
+      stub_pair(ordered, local_result("province" => "湖北", "city" => "武汉"),
+                online_result)
+
+      r = ordered.lookup("1.2.3.4")
+      expect(r["state"]).to eq("local")
+      expect(r["sources"]["cache"]["state"]).to eq("skipped")
+      expect(r["sources"]["online"]["state"]).to eq("skipped")
+    end
+
+    it "-p local,internet,cache: 本地不满意 + 互联网不可达 → 缓存兑底叠加" do
+      write_cache_entry("1.2.3.4", {
+        "state" => "local", "country" => "中国", "province" => "湖北",
+        "city" => "武汉", "asn" => "4134", "asn_org" => "Chinanet",
+        "network" => "1.2.3.0/24" })
+      ordered = described_class.new(
+        cache_file: File.join(tmpdir, "n2.json"),
+        geo_cache_dir: cache_dir, order: "local,internet,cache")
+      down = { "state" => "unreachable", "message" => "timeout" }
+      stub_pair(ordered, local_result, nil) { |_ip| down }
+
+      r = ordered.lookup("1.2.3.4")
+      expect(r["state"]).to eq("merged")     # 本地部分 + 缓存叠加
+      expect(r["province"]).to eq("湖北")
+      expect(r["asn"]).to eq("4134")
+    end
+
+    it "缓存 empty 记录: 各源均确认无归属 → empty" do
+      write_cache_entry("1.2.3.4", { "state" => "empty" })
+      stub_local(local_result("state" => "empty"))
+      stub_online(online_result("state" => "empty", "message" => "private range"))
+
+      r = ngeo.lookup("1.2.3.4")
+      expect(r["state"]).to eq("empty")
+      expect(r["sources"]["cache"]["state"]).to eq("empty")
+    end
+
+    it "缓存命中不满意且无更多补充 → cache-partial" do
+      write_cache_entry("1.2.3.4", {
+        "state" => "local", "country" => "中国", "province" => "", "city" => "",
+        "asn" => "", "asn_org" => "", "network" => "1.2.3.0/24" })
+      ordered = described_class.new(
+        cache_file: File.join(tmpdir, "n2.json"),
+        geo_cache_dir: cache_dir, order: "cache,local")
+      down_local = { "state" => "unavailable", "message" => "geo-api 服务不可达" }
+      stub_pair(ordered, down_local)
+
+      r = ordered.lookup("1.2.3.4")
+      expect(r["state"]).to eq("cache-partial")
+      expect(r["network"]).to eq("1.2.3.0/24")
+      expect(r["cached"]).to be true
+    end
+
+    it "refresh: 跳过 GEO_CACHE 强制重查" do
+      write_cache_entry("1.2.3.4", {
+        "state" => "local", "province" => "缓存省",
+        "city" => "缓存市", "asn" => "4134" })
+      stub_local(local_result("province" => "湖北", "city" => "武汉"))
+      stub_online(online_result)
+
+      r = ngeo.lookup("1.2.3.4", refresh: true)
+      expect(r["state"]).to eq("local")
+      expect(r["province"]).to eq("湖北")
+      expect(r["sources"]["cache"]["state"]).to eq("skipped")
+    end
+
+    it "缓存命中结果写入会话缓存, 二次查询直接命中" do
+      write_cache_entry("1.2.3.4", {
+        "state" => "local", "country" => "中国", "province" => "湖北",
+        "city" => "武汉", "asn" => "4134", "asn_org" => "Chinanet" })
+      stub_local(local_result)
+      stub_online(online_result)
+
+      r1 = ngeo.lookup("1.2.3.4")
+      expect(r1["state"]).to eq("cache")
+      r2 = ngeo.lookup("1.2.3.4")
+      expect(r2["state"]).to eq("cache")
+      expect(r2["cached"]).to be true
+    end
+
+    it "无 -a 时 cache 源不参与 (行为与原模型一致)" do
+      plain = described_class.new(cache_file: File.join(tmpdir, "n3.json"))
+      stub_pair(plain, local_result("province" => "湖北", "city" => "武汉"),
+                online_result)
+
+      r = plain.lookup("1.2.3.4")
+      expect(r["state"]).to eq("local")
+      expect(r["sources"]).to_not have_key("cache")
     end
   end
 end

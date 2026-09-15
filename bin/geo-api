@@ -11,6 +11,7 @@
 # 用法:
 #   geo-api                              # 默认 ./geodb/ + 0.0.0.0:9292
 #   geo-api -d /data/ipdb                # 指定数据文件目录
+#   geo-api -d /data/ipdb -a ./GEO_CACHE # 外带 GEO_CACHE 缓存目录
 #   geo-api -p 8080                      # 指定端口
 #   geo-api -b 127.0.0.1 -p 9292 -d ./ipdb
 #   geo-api --server puma                # 指定 Rack 服务器
@@ -18,6 +19,9 @@
 #
 # 选项:
 #   -d, --data-dir DIR   IP 数据文件目录，默认 ./geodb/
+#   -a, --cache-dir DIR  GEO_CACHE 外带缓存目录 (geocacheYYYYMMDD.json,
+#                        ngeo-get -c 产出; addr 查询兑底)
+#   --priority ORDER     查询顺位 local,cache 的排列 (默认 local,cache)
 #   -b, --host HOST      监听地址，默认 0.0.0.0
 #   -p, --port PORT      监听端口，默认 9292
 #   -s, --server NAME    Rack 服务器，默认 puma
@@ -29,6 +33,13 @@
 #   country-IPv4.json / country-IPv6.json / city-IPv6.json / geo-city.json /
 #   geo-country.json)。目录不存在或没有任何 *.json 文件将直接报错退出。
 #   查询时若具体文件缺失，对应接口容错返回 404 无结果，不影响其他接口。
+#
+# 缓存目录说明:
+#   -a 指定的 GEO_CACHE 目录内存放 geocacheYYYYMMDD.json (客户端 ngeo-get
+#   查询产出)。addr 查询按 --priority 顺位 (默认 local,cache) 编排:
+#   先查本地 GeoLite2 库，查不到时用缓存定位信息兑底。目录不存在仅警告
+#   不退出 (首次使用可能尚无产出文件，后续创建自动感知); 目录内文件
+#   增删改自动感知，无需重启。缓存命中响应附 "cached": true 标记。
 
 require "optparse"
 require "rackup"
@@ -40,6 +51,8 @@ $LOAD_PATH.unshift File.join(ROOT, "service", "geodb")
 # 命令行默认值
 options = {
   data_dir: nil,
+  cache_dir: nil,
+  priority: nil,
   host: "0.0.0.0",
   port: 9292,
   server: "puma"
@@ -56,6 +69,8 @@ parser = OptionParser.new do |opts|
     选项:
   BAN
   opts.on("-d", "--data-dir DIR", "IP 数据文件目录，默认 ./geodb/") { |v| options[:data_dir] = v }
+  opts.on("-a", "--cache-dir DIR", "GEO_CACHE 外带缓存目录 (geocache*.json, 查询兑底)") { |v| options[:cache_dir] = v }
+  opts.on("--priority ORDER", "查询顺位 local,cache 排列 (默认 local,cache)") { |v| options[:priority] = v }
   opts.on("-b", "--host HOST", "监听地址，默认 0.0.0.0") { |v| options[:host] = v }
   opts.on("-p", "--port PORT", Integer, "监听端口，默认 9292") { |v| options[:port] = v }
   opts.on("-s", "--server NAME", "Rack 服务器，默认 puma") { |v| options[:server] = v }
@@ -94,10 +109,34 @@ if json_files.empty?
   exit 1
 end
 
+# ---- 缓存目录与顺位 ---------------------------------------------------------
+cache_order = options[:priority] || "local,cache"
+parts = cache_order.split(/[,\s]+/).map(&:strip).reject(&:empty?)
+unless !parts.empty? && parts.all? { |p| %w[local cache].include?(p) } && parts.uniq.size == parts.size
+  warn "✗ 无效顺位: #{cache_order} (geo-api 仅支持 local / cache 的排列)"
+  warn "  示例: --priority local,cache   (默认, 先本地库再缓存)"
+  exit 1
+end
+ENV["GEODB_CACHE_ORDER"] = parts.join(",")
+
+cache_dir = nil
+if options[:cache_dir]
+  cache_dir = File.expand_path(options[:cache_dir])
+  # 目录不存在仅警告: 首次使用可能尚无产出文件, 后续创建自动感知
+  unless File.directory?(cache_dir)
+    warn "⚠ 缓存目录不存在: #{cache_dir} (将继续启动, 目录创建后自动感知)"
+  end
+  ENV["GEODB_CACHE_DIR"] = cache_dir
+end
+
 require_relative "../version"
-puts "╭─ geo-api #{NetworkInfraUtility::VERSION} ───────────────────────────────"
+puts "╭─ geo-api #{NetworkInfraUtility::VERSION} ─────────────────────────────"
 puts "│ 数据目录: #{data_dir} "
 puts "│ #{json_files.length}个数据文件：#{json_files.map { |f| File.basename(f) }.join(' ')}"
+if cache_dir
+  n_cache = Dir.glob(File.join(cache_dir, "geocache*.json")).select { |f| /\Ageocache\d{8}\.json\z/ =~ File.basename(f) }.size
+  puts "│ 缓存目录: #{cache_dir} (#{n_cache}个缓存文件, 兑底顺位: #{parts.join(',')})"
+end
 puts "│ 监听: http://#{options[:host]}:#{options[:port]}"
 puts "│ 服务: #{options[:server]}"
 puts "╰─ Ctrl+C 退出 ─────────────────────────────────────"

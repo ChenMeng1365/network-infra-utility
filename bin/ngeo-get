@@ -4,75 +4,114 @@
 #
 # ngeo-get — network-infra-utility 的 IP 归属综合查询工具 (geo 系列)
 #
-# 综合 geo-get (本地 geo-api 服务) 与 gen-get (互联网 ip-api.com) 两个数据源:
-#   1. 本地接口可用时优先使用 geo-get 数据源
-#   2. 本地归属不满意 (省/市/ASN 缺失) 时, 自动调 gen-get 补互联网结果
-#   3. 互联网不通时返回"互联网查询不可达"状态; 本地部分结果仍保留
-#   4. 本地与互联网结果字段级叠加, 综合两方准确字段 (省/城市/用途 IDC·云)
+# 按 -p 顺位编排三个数据源, 满意即停, 字段叠加:
+#   cache    GEO_CACHE 外带缓存目录 (geocacheYYYYMMDD.json, -a 指定)
+#   local    本地 geo-api 服务 (GeoLite2)
+#   internet 互联网 ip-api.com (限速 + 熔断保护)
 #
-# 结果状态可信度: unreachable < local-partial < empty < local < online < merged
-#   unreachable   本地无结果 + 互联网不可达 (空结果状态)
-#   local-partial 本地部分结果 + 互联网不可达/无补充
-#   empty         两方均确认无归属 (如私有地址)
+# 结果状态可信度: unreachable < local-partial < cache-partial < empty
+#                < cache < local < online < merged
+#   unreachable   各源均无结果且有不联通 (空结果状态)
+#   local-partial 本地部分结果, 无更多补充
+#   cache-partial 缓存部分结果, 无更多补充
+#   empty         各源均确认无归属 (如私有地址)
+#   cache         缓存命中且满意
 #   local         本地结果满意 (省/市/ASN 齐全)
-#   online        本地无结果, 纯互联网结果
-#   merged        本地 + 互联网叠加综合
+#   online        纯互联网结果
+#   merged        多源叠加综合
 #
 # 用法:
-#   ngeo-get 111.8.44.6               # 综合查询, 文字格式
-#   ngeo-get 111.8.44.6 -j            # JSON 格式
-#   ngeo-get 1.1.1.1 8.8.8.8 ...     # 多 IP (在线部分自动限速)
-#   cat ips.txt | ngeo-get -j         # 从 stdin 逐行读 IP
-#   ngeo-get 111.8.44.6 --refresh     # 忽略缓存强刷
-#   ngeo-get 111.8.44.6 --no-local    # 跳过本地, 仅互联网
-#   ngeo-get --cache-stats            # 查看缓存统计
+#   ngeo-get 111.8.44.6                     # 默认顺位 cache,local,internet
+#   ngeo-get 111.8.44.6 -a ./GEO_CACHE      # 指定外带缓存目录
+#   ngeo-get 111.8.44.6 -p local,internet,cache   # 本地优先, 缓存兜底
+#   ngeo-get 111.8.44.6 -nc                 # 查询但不产出缓存文件
+#   ngeo-get 1.1.1.1 8.8.8.8 -j             # 多 IP (在线部分自动限速)
+#   cat ips.txt | ngeo-get -j                # 从 stdin 逐行读 IP
+#   ngeo-get -m ./GEO_CACHE                 # 合并缓存目录全部 geocache*.json
+#   ngeo-get --cache-stats                   # 查看会话缓存统计
 #
 # 选项:
-#   -t, --text         文字格式输出 (默认)
-#   -j, --json         JSON 格式输出 (多 IP 时输出数组)
-#   --refresh          忽略缓存强制重查
-#   --no-local         跳过本地 geo-api, 仅查互联网
-#   --api URL          覆盖默认互联网接口 ({ip} 占位符)
-#   --geoapi URL       覆盖本地 geo-api 地址 (默认 http://127.0.0.1:9292)
-#   --timeout SEC      互联网 HTTP 超时秒数, 默认 10
-#   --cache-stats      查看缓存统计后退出
-#   -h, --help         显示帮助
-#   -v, --version      显示版本
+#   -t, --text          文字格式输出 (默认)
+#   -j, --json          JSON 格式输出 (多 IP 时输出数组)
+#   -a, --cache-dir DIR GEO_CACHE 外带缓存目录 (geocache*.json 文件集)
+#   -p, --priority O    查询顺位, cache/local/internet 的排列
+#                       (默认 cache,local,internet: 优先缓存, 再本地, 再互联网)
+#   -c, --cache-out     查询结果保存为 geocacheYYYYMMDD.json (默认开启)
+#   -nc, --no-cache-out 不保存查询产出
+#   -m, --merge DIR     合并 DIR 下全部 geocache*.json 为新文件后退出
+#   --refresh           忽略缓存强制重查 (会话缓存与 GEO_CACHE 均跳过)
+#   --no-local          跳过本地 geo-api
+#   --api URL           覆盖默认互联网接口 ({ip} 占位符)
+#   --geoapi URL        覆盖本地 geo-api 地址 (默认 http://127.0.0.1:9292)
+#   --timeout SEC       互联网 HTTP 超时秒数, 默认 10
+#   --cache-stats       查看缓存统计后退出
+#   -h, --help          显示帮助
+#   -v, --version       显示版本
 #
-# 退出码: 0 = 查询完成 (含 empty/local-partial); 1 = IP 不合法; 2 = 互联网不可达且本地无结果
+# 产出说明:
+#   每次查询的结果 (默认) 保存到缓存目录 (未指定 -a 时为当前目录,
+#   可用环境变量 GEO_CACHE_DIR 覆盖), 命名为 geocacheYYYYMMDD.json,
+#   同一天多次查询自动归并到同一文件, 同 IP 以新结果覆盖。
+#   产出文件即后续 -a 查询 / -m 合并 / geo-api -a 服务端兜底的数据源。
+#
+# 退出码: 0 = 查询完成 (含 empty/local-partial/cache-partial);
+#         1 = IP 不合法或参数错误; 2 = 互联网不可达且其余源无结果
 
 require "optparse"
 require "json"
 require_relative "../service/geoquery/geoquery"
 
 options = { format: :text, refresh: false, no_local: false, timeout: 10,
-            api: nil, geoapi: nil }
+            api: nil, geoapi: nil, geo_cache_dir: nil, order: nil,
+            cache_out: true, merge_dir: nil }
+
+# "-nc" 为 "-c" 的反义短参组合, OptionParser 无法注册, 手动预提取
+if (idx = ARGV.index("-nc"))
+  ARGV.delete_at(idx)
+  options[:cache_out] = false
+end
+
 parser = OptionParser.new do |opts|
   opts.banner = <<~BAN
-    ngeo-get — IP 归属综合查询工具 (本地 geo-get + 互联网 gen-get)
+    ngeo-get — IP 归属综合查询工具 (GEO_CACHE 缓存 + 本地 geo-get + 互联网 gen-get)
 
-    策略: 本地优先 → 归属不满意时补互联网 → 两方准确字段叠加
+    策略: 按顺位逐源查询 (-p, 默认 cache,local,internet), 满意即停, 字段叠加
     用法:
       ngeo-get <IP> [options]
-      ngeo-get 111.8.44.6 -j
+      ngeo-get 111.8.44.6 -a ./GEO_CACHE -j
+      ngeo-get -m ./GEO_CACHE
       cat ips.txt | ngeo-get -j
 
     选项:
   BAN
-  opts.on("-t", "--text", "文字格式输出 (默认)")      { options[:format] = :text }
-  opts.on("-j", "--json", "JSON 格式输出")            { options[:format] = :json }
-  opts.on("--refresh", "忽略缓存强制重查")             { options[:refresh] = true }
-  opts.on("--no-local", "跳过本地 geo-api, 仅查互联网") { options[:no_local] = true }
+  opts.on("-t", "--text", "文字格式输出 (默认)")        { options[:format] = :text }
+  opts.on("-j", "--json", "JSON 格式输出")              { options[:format] = :json }
+  opts.on("-a", "--cache-dir DIR", "GEO_CACHE 外带缓存目录") { |v| options[:geo_cache_dir] = v }
+  opts.on("-p", "--priority ORDER", "查询顺位 cache/local/internet 排列 (默认 cache,local,internet)") { |v| options[:order] = v }
+  opts.on("-c", "--cache-out", "查询结果保存为 geocacheYYYYMMDD.json (默认开启)") { options[:cache_out] = true }
+  opts.on("--no-cache-out", "不保存查询产出 (同 -nc)")    { options[:cache_out] = false }
+  opts.on("-m", "--merge DIR", "合并 DIR 下全部 geocache*.json 为新文件后退出") { |v| options[:merge_dir] = v }
+  opts.on("--refresh", "忽略缓存强制重查")               { options[:refresh] = true }
+  opts.on("--no-local", "跳过本地 geo-api")              { options[:no_local] = true }
   opts.on("--api URL", "覆盖默认互联网接口 ({ip} 占位符)") { |v| options[:api] = v }
-  opts.on("--geoapi URL", "覆盖本地 geo-api 地址")     { |v| options[:geoapi] = v }
+  opts.on("--geoapi URL", "覆盖本地 geo-api 地址")        { |v| options[:geoapi] = v }
   opts.on("--timeout SEC", Integer, "互联网 HTTP 超时秒数 (默认 10)") { |v| options[:timeout] = v }
   opts.on("--cache-stats", "查看缓存统计") do
     cache = GeoQuery::Cache.new(File.join(GeoQuery::Cache.default_dir, "ngeo-cache.json"))
     stats = cache.stats
-    puts "缓存文件: #{stats['file']}"
+    puts "会话缓存: #{stats['file']}"
     puts "缓存条目: #{stats['total']}    大小: #{stats['size_kb']} KB"
     unless stats["states"].empty?
       puts "状态分布: " + stats["states"].map { |k, v| "#{k}=#{v}" }.join("  ")
+    end
+    if options[:geo_cache_dir]
+      gstats = GeoQuery::GeoCache.new(options[:geo_cache_dir]).stats
+      puts
+      puts "GEO_CACHE: #{gstats['dir']}"
+      puts "缓存文件: #{gstats['files']}    条目: #{gstats['entries']}"
+      unless gstats["states"].empty?
+        puts "状态分布: " + gstats["states"].map { |k, v| "#{k}=#{v}" }.join("  ")
+      end
     end
     exit 0
   end
@@ -83,10 +122,44 @@ parser = OptionParser.new do |opts|
   end
   opts.on("-h", "--help", "显示帮助") do
     puts opts
+    puts <<~NOTE
+
+      顺位示例:
+        -p cache,local,internet   优先缓存 → 本地库 → 互联网 (默认)
+        -p local,internet,cache   本地优先, 本地查不到才找互联网, 互联网查不到或不通再查缓存
+        -p internet,local         纯互联网优先, 不通再查本地
+
+      产出: 默认保存查询结果为 geocacheYYYYMMDD.json (缓存目录或当前目录), -nc 关闭
+    NOTE
     exit 0
   end
 end
 parser.parse!
+
+# ---- -m 整理模式: 合并缓存目录后退出 (优先级最高) ---------------------------
+if options[:merge_dir]
+  gc = GeoQuery::GeoCache.new(options[:merge_dir])
+  unless File.directory?(gc.dir)
+    warn "✗ 缓存目录不存在: #{gc.dir}"
+    exit 1
+  end
+  stats = gc.merge!
+  puts "合并完成: #{stats['files']} 个缓存文件 → #{stats['entries']} 条记录"
+  puts "输出文件: #{stats['output']}"
+  exit 0
+end
+
+# ---- 顺位参数校验 -----------------------------------------------------------
+order = GeoQuery::NGeo::DEFAULT_ORDER
+if options[:order]
+  order = GeoQuery::GeoCache.parse_order(options[:order])
+  if order.nil?
+    warn "✗ 无效顺位: #{options[:order]}"
+    warn "  合法源: cache / local / internet, 逗号分隔, 不重复"
+    warn "  示例: -p cache,local,internet   (默认)"
+    exit 1
+  end
+end
 
 # IP 来源: 命令行参数, 无参数且 stdin 非 TTY 时逐行读
 ips = ARGV.reject { |a| a.start_with?("-") }.map(&:strip).reject(&:empty?)
@@ -99,7 +172,8 @@ if ips.empty?
 end
 
 ngeo = GeoQuery::NGeo.new(api: options[:api], geoapi_base: options[:geoapi],
-                          timeout: options[:timeout])
+                          timeout: options[:timeout],
+                          geo_cache_dir: options[:geo_cache_dir], order: order)
 
 results = ips.map do |ip|
   ngeo.lookup(ip, refresh: options[:refresh], no_local: options[:no_local])
@@ -107,25 +181,41 @@ end
 
 ngeo.save_cache
 
+# ---- 产出: 查询结果保存为 geocacheYYYYMMDD.json -----------------------------
+# 保存目录: -a 指定目录 > ENV["GEO_CACHE_DIR"] > 当前目录; -nc 关闭
+if options[:cache_out] && !results.empty?
+  out_dir = options[:geo_cache_dir] || GeoQuery::GeoCache.default_dir
+  out = GeoQuery::GeoCache.new(out_dir).put_batch(results)
+  # 提示走 stderr, 不污染 JSON 输出
+  warn "产出: #{out['entries']} 条查询结果 → #{out['file']}" if out
+end
+
 # ---- 输出 -------------------------------------------------------------------
 STATE_LABEL = {
-  "merged" => "本地+互联网综合", "online" => "纯互联网",
-  "local" => "本地满意", "local-partial" => "本地部分 (互联网不可达/无补充)",
-  "empty" => "两方均无归属", "unreachable" => "互联网查询不可达",
+  "merged" => "多源叠加综合", "online" => "纯互联网",
+  "local" => "本地满意", "local-partial" => "本地部分 (无更多补充)",
+  "cache" => "缓存命中", "cache-partial" => "缓存部分 (无更多补充)",
+  "empty" => "各源均无归属", "unreachable" => "查询不可达",
   "invalid" => "IP 不合法",
 }.freeze
+
+SRC_DISPLAY = {
+  "cache" => "GEO_CACHE 缓存", "local" => "本地 geo-get", "online" => "互联网 gen-get",
+}.freeze
+
+ORDER_TEXT = order.join(",").freeze
 
 case options[:format]
 when :json
   puts JSON.pretty_generate(results.size == 1 ? results.first : results)
 when :text
   results.each do |r|
-    puts "查询 IP: #{r['ip']}    策略: 本地优先 → 不满意补互联网 → 字段叠加"
+    puts "查询 IP: #{r['ip']}    顺位: #{ORDER_TEXT} (满意即停, 字段叠加)"
     puts "-" * 64
     case r["state"]
     when "unreachable"
       puts "✗ #{r['message']}"
-      puts "状态: unreachable (#{STATE_LABEL['unreachable']}) —— 本地无结果, 互联网不可达, 返回空结果状态"
+      puts "状态: unreachable (#{STATE_LABEL['unreachable']}) —— 各源均无结果, 且有不联通"
     when "invalid"
       puts "✗ #{r['message']}"
       puts "状态: invalid"
@@ -146,7 +236,7 @@ when :text
       if r["sources"].is_a?(Hash)
         r["sources"].each do |name, info|
           next unless info.is_a?(Hash)
-          label = name == "local" ? "本地 geo-get" : "互联网 gen-get"
+          label = SRC_DISPLAY[name] || name
           verdict = info["verdict"] ? ", #{info['verdict']}" : ""
           msg = info["message"].to_s.empty? ? "" : " (#{info['message']})"
           puts "  · #{label}: #{info['state']}#{verdict}#{msg}"
