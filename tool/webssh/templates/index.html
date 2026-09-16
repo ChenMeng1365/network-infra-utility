@@ -1,0 +1,1351 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebSSH - 端口自动探测终端</title>
+  <link rel="stylesheet" href="/static/vendor/xterm.css">
+  <style>
+    :root {
+      --bg-primary: #0d1117;
+      --bg-secondary: #161b22;
+      --bg-tertiary: #21262d;
+      --bg-input: #0d1117;
+      --text-primary: #e6edf3;
+      --text-secondary: #8b949e;
+      --accent: #2f81f7;
+      --accent-hover: #1f6feb;
+      --success: #2ea043;
+      --error: #f85149;
+      --warning: #d29922;
+      --border: #30363d;
+      --radius: 6px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+
+    body {
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: "Segoe UI", "Microsoft YaHei", -apple-system, sans-serif;
+      font-size: 13px;
+      overflow: hidden;
+    }
+
+    .app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    /* ---- Header ---- */
+    header {
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      padding: 8px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+    .header-left { display: flex; align-items: baseline; gap: 10px; }
+    .header-left h1 { font-size: 16px; font-weight: 600; }
+    .header-left .subtitle { color: var(--text-secondary); font-size: 12px; }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .status-connected { background: rgba(46,160,67,.15); color: var(--success); }
+    .status-connected .status-dot { background: var(--success); }
+    .status-disconnected { background: rgba(139,148,158,.15); color: var(--text-secondary); }
+    .status-disconnected .status-dot { background: var(--text-secondary); }
+
+    /* ---- Main layout ---- */
+    .main { display: flex; flex: 1; overflow: hidden; }
+
+    /* ---- Sidebar ---- */
+    .sidebar {
+      width: 300px;
+      background: var(--bg-secondary);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+
+    /* Sidebar tabs */
+    .sidebar-tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .sidebar-tab {
+      padding: 8px 12px;
+      font-size: 12px;
+      cursor: pointer;
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
+      border-bottom: 2px solid transparent;
+      transition: all .15s;
+      white-space: nowrap;
+    }
+    .sidebar-tab:hover { color: var(--text-primary); }
+    .sidebar-tab.active {
+      color: var(--text-primary);
+      border-bottom-color: var(--accent);
+    }
+
+    .sidebar-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px;
+    }
+
+    .panel {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px;
+      margin-bottom: 10px;
+    }
+    .panel h2 {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
+
+    /* ---- Process items ---- */
+    .process-item { margin-bottom: 8px; }
+    .process-item:last-child { margin-bottom: 0; }
+    .process-name { font-weight: 600; font-size: 12px; }
+    .process-pid { color: var(--text-secondary); font-size: 11px; margin: 1px 0 3px; }
+    .port-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 3px 0;
+      font-size: 12px;
+    }
+    .port-item .port-text { color: var(--text-primary); }
+    .port-item .port-addr { color: var(--text-secondary); font-size: 11px; }
+
+    .info { color: var(--text-secondary); font-size: 12px; padding: 3px 0; }
+
+    /* ---- Buttons ---- */
+    .btn {
+      background: var(--accent);
+      color: #fff;
+      border: 1px solid transparent;
+      border-radius: var(--radius);
+      padding: 5px 12px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+      transition: background .15s;
+      white-space: nowrap;
+    }
+    .btn:hover { background: var(--accent-hover); }
+    .btn:disabled { opacity: .4; cursor: not-allowed; }
+    .btn-sm { padding: 3px 10px; font-size: 11px; }
+    .btn-secondary {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover { background: var(--border); }
+    .btn-danger { background: var(--error); }
+    .btn-danger:hover { background: #da3633; }
+    .btn-success { background: var(--success); }
+    .btn-success:hover { background: #238636; }
+
+    /* ---- Input ---- */
+    .input-row { display: flex; gap: 6px; }
+    .input-row input {
+      flex: 1;
+      background: var(--bg-input);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 5px 10px;
+      font-size: 12px;
+      outline: none;
+    }
+    .input-row input:focus { border-color: var(--accent); }
+
+    .btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
+
+    /* ---- Log items ---- */
+    .log-item {
+      padding: 4px 6px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .log-item:last-child { border-bottom: none; }
+    .log-item:hover { background: rgba(47,129,247,.1); }
+    .log-item.active-log { background: rgba(47,129,247,.15); }
+    .log-item .log-name {
+      color: var(--accent);
+    }
+    .log-mode-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+    .log-mode-bar label { font-size: 11px; color: var(--text-secondary); }
+    .log-mode-bar select {
+      background: var(--bg-input);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 2px 6px;
+      font-size: 11px;
+      outline: none;
+    }
+
+    /* ---- Session items ---- */
+    .session-item { margin-bottom: 6px; }
+    .session-item:last-child { margin-bottom: 0; }
+
+    /* ---- Terminal tabs ---- */
+    .terminal-area {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: #000;
+    }
+
+    .terminal-tabs {
+      display: flex;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      overflow-x: auto;
+    }
+    .terminal-tabs::-webkit-scrollbar { height: 3px; }
+
+    .terminal-tab {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      font-size: 12px;
+      cursor: pointer;
+      border-right: 1px solid var(--border);
+      color: var(--text-secondary);
+      background: transparent;
+      transition: all .15s;
+      white-space: nowrap;
+    }
+    .terminal-tab:hover { background: var(--bg-tertiary); }
+    .terminal-tab.active {
+      color: var(--text-primary);
+      background: var(--bg-tertiary);
+      border-top: 2px solid var(--accent);
+    }
+    .terminal-tab .tab-close {
+      width: 16px; height: 16px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 3px;
+      font-size: 14px;
+      opacity: .5;
+      transition: opacity .15s;
+    }
+    .terminal-tab .tab-close:hover { opacity: 1; background: var(--error); color: #fff; }
+
+    .terminal-tab .tab-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .tab-dot.connected { background: var(--success); }
+    .tab-dot.disconnected { background: var(--text-secondary); }
+    .tab-dot.connecting { background: var(--warning); animation: blink 1s infinite; }
+    @keyframes blink { 50% { opacity: .3; } }
+
+    .terminal-pages {
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+    }
+    .terminal-page {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      padding: 4px;
+      display: none;
+    }
+    .terminal-page.active { display: block; }
+    .terminal-page .terminal-container {
+      width: 100%; height: 100%;
+    }
+    .terminal-page.read-only {
+      padding: 8px;
+      overflow: auto;
+      background: var(--bg-primary);
+    }
+    .terminal-page.read-only pre {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--text-primary);
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    /* ---- Scrollbar ---- */
+    .sidebar-content::-webkit-scrollbar { width: 6px; }
+    .sidebar-content::-webkit-scrollbar-track { background: transparent; }
+    .sidebar-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ---- Toast ---- */
+    .toast {
+      position: fixed;
+      bottom: 20px; right: 20px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px 16px;
+      font-size: 13px;
+      z-index: 999;
+      opacity: 0;
+      transform: translateY(10px);
+      transition: opacity .2s, transform .2s;
+      pointer-events: none;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+
+    /* ---- Toolbar ---- */
+    .toolbar-group { margin-bottom: 8px; }
+    .toolbar-group-header {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-primary);
+      cursor: pointer;
+      padding: 5px 8px;
+      background: var(--bg-tertiary);
+      border-radius: var(--radius);
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .toolbar-group-header:hover { background: var(--border); }
+    .toolbar-group-header .arrow {
+      font-size: 10px;
+      transition: transform .15s;
+      color: var(--text-secondary);
+    }
+    .toolbar-group-header.collapsed .arrow { transform: rotate(-90deg); }
+    .toolbar-tools {
+      padding-left: 14px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .toolbar-tools.hidden { display: none; }
+    .tool-btn {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 4px 10px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: all .15s;
+      position: relative;
+    }
+    .tool-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .tool-btn:active { background: var(--accent); color: #fff; }
+    .tool-btn:disabled { opacity: .4; cursor: not-allowed; }
+    .tool-btn .tooltip {
+      position: absolute;
+      bottom: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 6px 10px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      white-space: pre-wrap;
+      max-width: 250px;
+      max-height: 120px;
+      overflow-y: auto;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .15s;
+      z-index: 100;
+    }
+    .tool-btn:hover .tooltip { opacity: 1; }
+    .toolbar-divider {
+      border: none;
+      border-top: 1px dashed var(--border);
+      margin: 10px 0;
+    }
+    .ext-group-header {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--accent);
+      padding: 6px 8px;
+      background: var(--bg-secondary);
+      border-radius: var(--radius);
+      margin: 8px 0 4px;
+    }
+    .ext-subgroup-header {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-primary);
+      cursor: pointer;
+      padding: 4px 8px;
+      background: var(--bg-tertiary);
+      border-radius: var(--radius);
+      margin-bottom: 3px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .ext-subgroup-header:hover { background: var(--border); }
+    .ext-subgroup-header .arrow {
+      font-size: 10px;
+      transition: transform .15s;
+      color: var(--text-secondary);
+    }
+    .ext-subgroup-header.collapsed .arrow { transform: rotate(-90deg); }
+  </style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="header-left">
+      <h1>WebSSH</h1>
+      <span class="subtitle">端口自动探测终端 · 多标签 · 会话独立进程</span>
+    </div>
+    <div class="header-right">
+      <span class="status-badge status-disconnected" id="status-badge">
+        <span class="status-dot"></span>
+        <span id="status-text">未连接</span>
+      </span>
+    </div>
+  </header>
+
+  <div class="main">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-tabs">
+        <button class="sidebar-tab active" data-tab="sessions" onclick="switchSidebarTab('sessions')">会话管理</button>
+        <button class="sidebar-tab" data-tab="toolbar" onclick="switchSidebarTab('toolbar')">工具栏</button>
+      </div>
+
+      <!-- Tab: Sessions -->
+      <div class="sidebar-content" id="sidebar-sessions">
+        <div class="panel">
+          <h2>进程探测 / 手动连接</h2>
+          <div id="process-list">
+            <p class="info">检测中...</p>
+          </div>
+          <div style="margin-top:6px; margin-bottom:8px;">
+            <button class="btn btn-secondary btn-sm" onclick="detectProcess()">刷新</button>
+          </div>
+          <div class="input-row" style="margin-top:8px;">
+            <input type="number" id="manual-port" placeholder="手动端口 (如 4983)" min="1" max="65535">
+            <button class="btn btn-sm" onclick="connectManual()">连接</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>会话控制</h2>
+          <div class="btn-row">
+            <button class="btn btn-danger btn-sm" onclick="disconnectActive()">断开当前标签</button>
+            <button class="btn btn-secondary btn-sm" onclick="saveActiveLog()">保存日志</button>
+          </div>
+          <p class="info" style="margin-top:4px;">断开页面连接不会结束SSH会话，后端进程会继续保持。</p>
+        </div>
+
+        <div class="panel">
+          <h2>后端会话 (独立进程)</h2>
+          <div id="session-list">
+            <p class="info">加载中...</p>
+          </div>
+          <div style="margin-top:6px;">
+            <button class="btn btn-secondary btn-sm" onclick="loadSessions()">刷新</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>历史记录</h2>
+          <div class="log-mode-bar">
+            <label>显示模式:</label>
+            <select id="log-display-mode" onchange="updateLogDisplayMode()">
+              <option value="raw">原文本</option>
+              <option value="debug">调试模式</option>
+            </select>
+          </div>
+          <div id="log-list">
+            <p class="info">加载中...</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab: Toolbar -->
+      <div class="sidebar-content" id="sidebar-toolbar" style="display:none;">
+        <div id="toolbar-container">
+          <p class="info">工具栏加载中...</p>
+        </div>
+        <hr class="toolbar-divider" id="ext-divider" style="display:none;">
+        <div id="extension-container"></div>
+      </div>
+    </aside>
+
+    <!-- Terminal area -->
+    <main class="terminal-area">
+      <div class="terminal-tabs" id="terminal-tabs">
+        <!-- terminal tabs inserted here -->
+      </div>
+      <div class="terminal-pages" id="terminal-pages">
+        <!-- terminal pages inserted here -->
+      </div>
+    </main>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- xterm.js (local, offline-friendly) -->
+<script src="/static/vendor/xterm.min.js"></script>
+<script src="/static/vendor/xterm-addon-fit.min.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  // ---- State ----
+  var tabs = [];          // { id, label, type: 'terminal'|'log', term, fitAddon, ws, sid, log, status, scrollback }
+  var activeTabId = null;
+  var tabCounter = 0;
+  var scrollbackLimit = 10000;
+  var toolbarConfig = {};
+  var currentSid = null;  // active session sid for toolbar send
+
+  // ---- Terminal init ----
+  function newTerminal(scrollback) {
+    var term = new Terminal({
+      fontSize: 14,
+      fontFamily: 'Consolas, "Courier New", monospace',
+      cursorBlink: true,
+      scrollback: scrollback > 0 ? scrollback : 10000,
+      theme: {
+        background: "#000000",
+        foreground: "#e6edf3",
+        cursor: "#ffffff"
+      }
+    });
+    return term;
+  }
+
+  function fitTab(tabId) {
+    var tab = tabs.find(function (t) { return t.id === tabId; });
+    if (tab && tab.fitAddon && tab.type === 'terminal') {
+      try { tab.fitAddon.fit(); } catch (e) {}
+    }
+  }
+
+  // ---- Tab management ----
+  function createTerminalTab(label) {
+    var id = ++tabCounter;
+    var pageDiv = document.createElement('div');
+    pageDiv.className = 'terminal-page';
+    pageDiv.dataset.tabId = id;
+
+    var containerDiv = document.createElement('div');
+    containerDiv.className = 'terminal-container';
+    pageDiv.appendChild(containerDiv);
+    document.getElementById('terminal-pages').appendChild(pageDiv);
+
+    var term = newTerminal(scrollbackLimit);
+    var fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(containerDiv);
+
+    var tab = {
+      id: id,
+      label: label,
+      type: 'terminal',
+      term: term,
+      fitAddon: fitAddon,
+      ws: null,
+      sid: null,
+      log: [],
+      status: 'disconnected',
+      pageDiv: pageDiv
+    };
+    tabs.push(tab);
+
+    // Tab header
+    renderTerminalTabs();
+
+    // Terminal input -> ws
+    term.onData(function (data) {
+      if (tab.ws && tab.ws.readyState === WebSocket.OPEN) {
+        tab.ws.send(JSON.stringify({ type: "input", data: data }));
+      }
+    });
+
+    // Resize observer
+    var ro = new ResizeObserver(function () { fitTab(id); });
+    ro.observe(containerDiv);
+
+    activateTab(id);
+    return tab;
+  }
+
+  function createLogTab(label, content, logFile, rawContent, isInteractive) {
+    var id = ++tabCounter;
+    var pageDiv = document.createElement('div');
+    pageDiv.className = 'terminal-page read-only';
+    pageDiv.dataset.tabId = id;
+
+    var pre = document.createElement('pre');
+    pre.textContent = content;
+    pageDiv.appendChild(pre);
+    document.getElementById('terminal-pages').appendChild(pageDiv);
+
+    var tab = {
+      id: id,
+      label: label,
+      type: 'log',
+      term: null,
+      fitAddon: null,
+      ws: null,
+      sid: null,
+      log: [],
+      status: 'idle',
+      pageDiv: pageDiv,
+      logFile: logFile || null,
+      rawContent: rawContent || content,
+      isInteractive: isInteractive || false
+    };
+    tabs.push(tab);
+    renderTerminalTabs();
+    activateTab(id);
+    return tab;
+  }
+
+  function renderTerminalTabs() {
+    var container = document.getElementById('terminal-tabs');
+    container.innerHTML = '';
+    tabs.forEach(function (tab) {
+      var el = document.createElement('div');
+      el.className = 'terminal-tab' + (tab.id === activeTabId ? ' active' : '');
+      el.onclick = function () { activateTab(tab.id); };
+
+      // Status dot for terminals
+      if (tab.type === 'terminal') {
+        var dot = document.createElement('span');
+        dot.className = 'tab-dot ' + (tab.status || 'disconnected');
+        el.appendChild(dot);
+      }
+
+      var label = document.createElement('span');
+      label.textContent = tab.label;
+      el.appendChild(label);
+
+      var close = document.createElement('span');
+      close.className = 'tab-close';
+      close.textContent = '\u00d7';
+      close.onclick = function (e) {
+        e.stopPropagation();
+        closeTab(tab.id);
+      };
+      el.appendChild(close);
+
+      container.appendChild(el);
+    });
+  }
+
+  function activateTab(id) {
+    activeTabId = id;
+    tabs.forEach(function (tab) {
+      tab.pageDiv.classList.toggle('active', tab.id === id);
+    });
+    renderTerminalTabs();
+    var tab = tabs.find(function (t) { return t.id === id; });
+    if (tab && tab.type === 'terminal') {
+      setTimeout(function () { fitTab(id); tab.term.focus(); }, 50);
+      currentSid = tab.sid;
+      updateStatus(tab.status);
+    } else {
+      currentSid = null;
+      updateStatus('idle');
+    }
+    updateToolbarState();
+  }
+
+  function closeTab(id) {
+    var idx = tabs.findIndex(function (t) { return t.id === id; });
+    if (idx < 0) return;
+    var tab = tabs[idx];
+    // Close WebSocket if open
+    if (tab.ws) {
+      try { tab.ws.close(); } catch (e) {}
+    }
+    // Dispose terminal
+    if (tab.term) {
+      try { tab.term.dispose(); } catch (e) {}
+    }
+    // Remove DOM
+    tab.pageDiv.remove();
+    tabs.splice(idx, 1);
+    // Activate neighbor
+    if (activeTabId === id) {
+      if (tabs.length > 0) {
+        activateTab(tabs[Math.min(idx, tabs.length - 1)].id);
+      } else {
+        activeTabId = null;
+        renderTerminalTabs();
+        updateStatus('disconnected');
+      }
+    } else {
+      renderTerminalTabs();
+    }
+  }
+
+  function getActiveTerminalTab() {
+    return tabs.find(function (t) { return t.id === activeTabId && t.type === 'terminal'; });
+  }
+
+  // ---- Sidebar tabs ----
+  function switchSidebarTab(name) {
+    document.querySelectorAll('.sidebar-tab').forEach(function (el) {
+      el.classList.toggle('active', el.dataset.tab === name);
+    });
+    document.getElementById('sidebar-sessions').style.display = name === 'sessions' ? '' : 'none';
+    document.getElementById('sidebar-toolbar').style.display = name === 'toolbar' ? '' : 'none';
+  }
+
+  // ---- Process detection ----
+  function detectProcess() {
+    var container = document.getElementById('process-list');
+    container.innerHTML = '<p class="info">检测中...</p>';
+    fetch("/api/detect")
+      .then(function (r) { return r.json(); })
+      .then(function (data) { renderProcessList(data); })
+      .catch(function (err) {
+        container.innerHTML = '<p class="info">检测失败: ' + escapeHtml(String(err)) + "</p>";
+      });
+  }
+
+  function renderProcessList(data) {
+    var container = document.getElementById("process-list");
+    var html = "";
+    if (!data || !data.results || data.results.length === 0) {
+      var names = (data && data.process_names) ? data.process_names.join(", ") : "";
+      html += '<p class="info">未找到匹配进程: ' + escapeHtml(names) + "</p>";
+    }
+    (data && data.results || []).forEach(function (proc) {
+      html += '<div class="process-item">';
+      html += '  <div class="process-name">' + escapeHtml(proc.name) + "</div>";
+      html += '  <div class="process-pid">PID: ' + proc.pid + "</div>";
+      (proc.ports || []).forEach(function (p) {
+        html += '  <div class="port-item">';
+        html += '    <span><span class="port-text">端口 ' + p.port + "</span>";
+        html += '    <span class="port-addr"> ' + escapeHtml(p.full) + "</span></span>";
+        html += '    <button class="btn btn-sm btn-success" onclick="connectToPort(' + p.port + ')">连接</button>';
+        html += "  </div>";
+      });
+      html += "</div>";
+    });
+    if (data && data.manual_port) {
+      html += '<div class="process-item">';
+      html += '  <div class="info">配置文件指定端口: ' + data.manual_port + '</div>';
+      html += '  <div class="port-item">';
+      html += '    <span class="port-text">端口 ' + data.manual_port + " (手动)</span>";
+      html += '    <button class="btn btn-sm" onclick="connectToPort(' + data.manual_port + ')">连接</button>';
+      html += "  </div>";
+      html += "</div>";
+    }
+    container.innerHTML = html;
+  }
+
+  // ---- Connect (spawns a NEW worker session) ----
+  function connectToPort(port) {
+    var tab = createTerminalTab("端口 " + port);
+    tab.status = 'connecting';
+    renderTerminalTabs();
+    tab.term.write("\r\n*** 正在连接端口 " + port + " ... ***\r\n");
+    openWs(tab, "port=" + port);
+  }
+
+  // ---- Attach to an existing detached session ----
+  function attachSession(sid) {
+    var tab = createTerminalTab("会话 " + sid.substring(0, 8));
+    tab.sid = sid;
+    tab.status = 'connecting';
+    renderTerminalTabs();
+    tab.term.write("\r\n*** 接入会话 " + sid + " ... ***\r\n");
+    openWs(tab, "attach=" + sid);
+  }
+
+  function openWs(tab, query) {
+    var proto = location.protocol === "https:" ? "wss:" : "ws:";
+    var url = proto + "//" + location.host + "/ws/ssh?" + query;
+    try {
+      tab.ws = new WebSocket(url);
+    } catch (e) {
+      tab.term.write("\r\n*** WebSocket error: " + escapeHtml(String(e.message || e)) + " ***\r\n");
+      return;
+    }
+
+    tab.ws.onopen = function () {
+      tab.status = 'connected';
+      updateTabStatus(tab);
+      if (tab.term) tab.term.focus();
+      tab.ws.send(JSON.stringify({ type: "resize", cols: tab.term.cols, rows: tab.term.rows }));
+    };
+
+    tab.ws.onmessage = function (event) {
+      var msg;
+      try { msg = JSON.parse(event.data); } catch (e) { return; }
+      if (msg.type === "output") {
+        tab.term.write(msg.data);
+        tab.log.push(msg.data);
+      } else if (msg.type === "status") {
+        if (msg.data === "connected") {
+          tab.term.write("\r\n*** SSH 已连接 ***\r\n");
+        } else {
+          tab.term.write("\r\n*** " + msg.data + " ***\r\n");
+        }
+      } else if (msg.type === "error") {
+        tab.term.write("\r\n*** Error: " + msg.data + " ***\r\n");
+        tab.status = 'disconnected';
+        updateTabStatus(tab);
+      }
+    };
+
+    tab.ws.onclose = function (event) {
+      if (tab.status === 'connected') {
+        if (event && event.code === 1006) {
+          tab.term.write("\r\n*** WebSocket 连接已断开 (可能是网络/隧道切换) ***\r\n");
+          tab.term.write("\r\n*** 后端会话若仍在运行，可从左侧\"后端会话\"重新接入 ***\r\n");
+        } else {
+          tab.term.write("\r\n*** 连接已关闭 (code " + (event && event.code) + ") ***\r\n");
+        }
+      }
+      tab.status = 'disconnected';
+      updateTabStatus(tab);
+      loadSessions();
+    };
+
+    tab.ws.onerror = function () {
+      if (tab.status === 'connected') {
+        tab.term.write("\r\n*** WebSocket 错误: 通道异常中断 ***\r\n");
+      }
+      tab.status = 'disconnected';
+      updateTabStatus(tab);
+    };
+  }
+
+  function updateTabStatus(tab) {
+    if (tab.id === activeTabId) {
+      updateStatus(tab.status);
+      if (tab.status === 'connected') {
+        currentSid = tab.sid;
+      } else {
+        currentSid = null;
+      }
+    }
+    renderTerminalTabs();
+    updateToolbarState();
+  }
+
+  function connectManual() {
+    var port = parseInt(document.getElementById("manual-port").value, 10);
+    if (!port || port < 1 || port > 65535) {
+      showToast("请输入有效端口号 (1-65535)");
+      return;
+    }
+    connectToPort(port);
+  }
+
+  // ---- Disconnect active terminal tab ----
+  function disconnectActive() {
+    var tab = getActiveTerminalTab();
+    if (!tab) { showToast("没有活动的终端标签"); return; }
+    if (tab.ws) {
+      try { tab.ws.close(); } catch (e) {}
+    }
+    tab.status = 'disconnected';
+    updateTabStatus(tab);
+  }
+
+  // ---- Save active tab log ----
+  function saveActiveLog() {
+    var tab = getActiveTerminalTab();
+    if (!tab || tab.log.length === 0) {
+      showToast("暂无日志可保存");
+      return;
+    }
+    var content = tab.log.join("");
+    var blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+    var a = document.createElement("a");
+    var ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    a.href = URL.createObjectURL(blob);
+    a.download = "session_" + ts + ".txt";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+    showToast("日志已下载");
+  }
+
+  // ---- Backend sessions list ----
+  function loadSessions() {
+    fetch("/api/sessions")
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        var container = document.getElementById("session-list");
+        if (!data.sessions || data.sessions.length === 0) {
+          container.innerHTML = '<p class="info">暂无后端会话</p>';
+          return;
+        }
+        var html = "";
+        data.sessions.forEach(function (s) {
+          var stateColor = s.state === "connected" ? "var(--success)" : "var(--text-secondary)";
+          html += '<div class="session-item">';
+          html += '  <div class="port-item">';
+          html += '    <span><span class="port-text" style="color:' + stateColor + '">' +
+                  escapeHtml(s.state || "?") + " · 端口 " + s.ssh_port + "</span>";
+          html += '    <span class="port-addr">PID ' + s.pid + " · " + escapeHtml(s.created || "") + "</span></span>";
+          html += "  </div>";
+          html += '  <div class="btn-row" style="margin-top:3px;">';
+          html += '    <button class="btn btn-sm btn-success" onclick="attachSession(\'' + s.sid + '\')">接入</button>';
+          html += '    <button class="btn btn-sm btn-danger" onclick="shutdownSession(\'' + s.sid + '\')">关闭</button>';
+          html += "  </div>";
+          html += "</div>";
+        });
+        container.innerHTML = html;
+      })
+      .catch(function () {
+        document.getElementById("session-list").innerHTML = '<p class="info">加载失败</p>';
+      });
+  }
+
+  function shutdownSession(sid) {
+    fetch("/api/sessions/" + sid + "/shutdown", { method: "POST" })
+      .then(function () {
+        showToast("已发送关闭指令");
+        setTimeout(loadSessions, 500);
+      })
+      .catch(function () { showToast("关闭失败"); });
+  }
+
+  // ---- Load history (click to open in tab, reuse existing tab) ----
+  var logDisplayMode = 'raw'; // 'raw' or 'debug'
+
+  function updateLogDisplayMode() {
+    var sel = document.getElementById('log-display-mode');
+    if (sel) logDisplayMode = sel.value;
+    // Re-render all open log tabs with the new mode
+    tabs.forEach(function (tab) {
+      if (tab.type === 'log' && tab.rawContent) {
+        var pre = tab.pageDiv.querySelector('pre');
+        if (pre) {
+          pre.textContent = formatLogContent(tab.rawContent, tab.isInteractive, logDisplayMode);
+        }
+      }
+    });
+  }
+
+  function formatLogContent(content, isInteractive, mode) {
+    if (!isInteractive) return content;
+    if (mode === 'debug') return content;
+    // Raw mode: strip debug formatting from interactive logs
+    // Format: "2026-09-12 14:32:46.123 [OUT] 'text\\r\\n'"
+    // Extract just the actual text from [OUT] and [IN] lines
+    var lines = content.split('\n');
+    var output = [];
+    var re = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} \[(\w+)\] (.*)$/;
+    for (var i = 0; i < lines.length; i++) {
+      var m = lines[i].match(re);
+      if (!m) {
+        // Non-log line, keep as-is
+        if (lines[i].trim()) output.push(lines[i]);
+        continue;
+      }
+      var tag = m[1];
+      var text = m[2];
+      if (tag === 'OUT' || tag === 'IN') {
+        // Unescape repr(): 'text\r\n' -> text\r\n
+        // Remove surrounding quotes
+        if (text.startsWith("'") && text.endsWith("'")) {
+          text = text.slice(1, -1);
+        }
+        // Unescape common Python repr sequences
+        text = text
+          .replace(/\\\\n/g, '\n')
+          .replace(/\\\\r/g, '\r')
+          .replace(/\\\\t/g, '\t')
+          .replace(/\\\\x1b/g, '\x1b')
+          .replace(/\\\\e/g, '\x1b')
+          .replace(/\\\\\\\\/g, '\\\\')
+          .replace(/\\\\'/g, "'");
+        output.push(text);
+      }
+      // Skip non-OUT/IN lines (timestamps, tags like CONNECT-START etc.) in raw mode
+    }
+    return output.join('');
+  }
+
+  function loadLogs() {
+    fetch("/api/logs")
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        var container = document.getElementById("log-list");
+        if (!data.logs || data.logs.length === 0) {
+          container.innerHTML = '<p class="info">暂无历史记录</p>';
+          return;
+        }
+        var html = "";
+        data.logs.forEach(function (log) {
+          html += '<div class="log-item" onclick="openLogInTab(\'' + log.name + '\')" data-log-name="' + escapeHtml(log.name) + '">';
+          html += '  <span class="log-name">' + escapeHtml(log.name) + "</span>";
+          html += "</div>";
+        });
+        container.innerHTML = html;
+      })
+      .catch(function () {
+        document.getElementById("log-list").innerHTML = '<p class="info">加载失败</p>';
+      });
+  }
+
+  function openLogInTab(filename) {
+    // If a tab for this file already exists, switch to it
+    var existing = tabs.find(function (t) { return t.type === 'log' && t.logFile === filename; });
+    if (existing) {
+      activateTab(existing.id);
+      return;
+    }
+    fetch("/api/logs/" + encodeURIComponent(filename) + "/content")
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.error) { showToast("读取失败: " + data.error); return; }
+        var label = filename.length > 20 ? filename.substring(0, 18) + ".." : filename;
+        var isInteractive = filename.startsWith("interactive_");
+        var rawContent = data.content || "";
+        var formatted = formatLogContent(rawContent, isInteractive, logDisplayMode);
+        createLogTab(label, formatted, filename, rawContent, isInteractive);
+      })
+      .catch(function (e) { showToast("读取失败: " + e); });
+  }
+
+  // ---- Toolbar ----
+  var extensionData = []; // parsed extension toolbars
+
+  function loadToolbar() {
+    fetch("/api/config")
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        scrollbackLimit = (data.terminal && data.terminal.scrollback !== undefined)
+          ? data.terminal.scrollback : 10000;
+        toolbarConfig = data.toolbar || {};
+        renderToolbar();
+      })
+      .catch(function () {
+        document.getElementById("toolbar-container").innerHTML =
+          '<p class="info">工具栏加载失败</p>';
+      });
+    loadExtensions();
+  }
+
+  function loadExtensions() {
+    fetch("/api/extensions")
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        extensionData = data.extensions || [];
+        renderExtensions();
+      })
+      .catch(function () {
+        document.getElementById("extension-container").innerHTML =
+          '<p class="info">额外工具栏加载失败</p>';
+      });
+  }
+
+  function renderToolbar() {
+    var container = document.getElementById("toolbar-container");
+    var groups = (toolbarConfig.groups || []);
+    if (groups.length === 0) {
+      container.innerHTML =
+        '<p class="info">暂无工具栏配置。</p>' +
+        '<p class="info" style="margin-top:6px;">在 config.yml 中配置 toolbar.groups 即可显示工具按钮。</p>';
+      return;
+    }
+    var lineDelay = toolbarConfig.line_delay || 0;
+    var html = "";
+    if (lineDelay > 0) {
+      html += '<p class="info" style="margin-bottom:6px;">行间隔: ' + lineDelay + 's</p>';
+    }
+    groups.forEach(function (group, gi) {
+      html += '<div class="toolbar-group">';
+      html += '  <div class="toolbar-group-header" onclick="toggleToolbarGroup(' + gi + ')">';
+      html += '    <span class="arrow">\u25bc</span>';
+      html += '    <span>' + escapeHtml(group.name || "未命名分组") + "</span>";
+      html += "  </div>";
+      html += '  <div class="toolbar-tools" id="toolbar-tools-' + gi + '">';
+      (group.tools || []).forEach(function (tool, ti) {
+        html += '<button class="tool-btn" onclick="sendToolCommand(' + gi + ', ' + ti + ')"' +
+                ' data-group="' + gi + '" data-tool="' + ti + '"' +
+                ">" + escapeHtml(tool.name || "未命名");
+        if (tool.command) {
+          html += '<span class="tooltip">' + escapeHtml(tool.command) + "</span>";
+        }
+        html += "</button>";
+      });
+      html += "  </div>";
+      html += "</div>";
+    });
+    container.innerHTML = html;
+  }
+
+  function renderExtensions() {
+    var container = document.getElementById("extension-container");
+    var divider = document.getElementById("ext-divider");
+    if (extensionData.length === 0) {
+      container.innerHTML = "";
+      divider.style.display = "none";
+      return;
+    }
+    divider.style.display = "";
+    var html = "";
+    extensionData.forEach(function (ext, ei) {
+      html += '<div class="ext-group-header">' + escapeHtml(ext.name) + "</div>";
+      // Recursively render the tree
+      var root = ext.root;
+      if (root && root.children) {
+        html += renderExtNodes(root.children, "ext_" + ei, []);
+      }
+    });
+    container.innerHTML = html;
+  }
+
+  function renderExtNodes(nodes, prefix, cmdPath) {
+    var html = "";
+    nodes.forEach(function (node, ni) {
+      var nodePath = cmdPath.concat([ni]);
+      var pathStr = JSON.stringify(nodePath);
+      if (node.command) {
+        // This is a leaf command node - render as button
+        var tooltip = node.comment || "";
+        html += '<button class="tool-btn" onclick="sendExtCommand(' + pathStr + ')"' +
+                ">" + escapeHtml(node.name || "未命名");
+        if (tooltip) {
+          html += '<span class="tooltip">' + escapeHtml(tooltip) + "</span>";
+        }
+        html += "</button>";
+      }
+      if (node.children && node.children.length > 0) {
+        // This is a directory node - render as collapsible group
+        var groupId = prefix + "_" + ni;
+        html += '<div class="ext-subgroup-header" onclick="toggleExtGroup(\'' + groupId + '\')" id="' + groupId + '_header">';
+        html += '  <span class="arrow">\u25bc</span>';
+        html += '  <span>' + escapeHtml(node.name || "未命名") + "</span>";
+        html += "</div>";
+        if (node.comment) {
+          html += '<p class="info" style="padding:2px 8px; font-size:11px;">' + escapeHtml(node.comment) + "</p>";
+        }
+        html += '<div class="toolbar-tools" id="' + groupId + '_tools">';
+        html += renderExtNodes(node.children, groupId, nodePath);
+        html += "</div>";
+      }
+    });
+    return html;
+  }
+
+  function toggleExtGroup(groupId) {
+    var tools = document.getElementById(groupId + "_tools");
+    var header = document.getElementById(groupId + "_header");
+    if (tools) {
+      tools.classList.toggle("hidden");
+      if (header) { header.classList.toggle("collapsed"); }
+    }
+  }
+
+  function sendExtCommand(pathArr) {
+    var tab = getActiveTerminalTab();
+    if (!tab || !tab.ws || tab.ws.readyState !== WebSocket.OPEN) {
+      showToast("没有活动的终端会话");
+      return;
+    }
+    // Navigate the extension tree to find the command
+    var cmd = null;
+    var toolName = "";
+    function findCmd(nodes, path) {
+      if (path.length === 0) return;
+      var idx = path[0];
+      var node = nodes[idx];
+      if (!node) return;
+      if (path.length === 1) {
+        cmd = node.command;
+        toolName = node.name;
+        return;
+      }
+      if (node.children) findCmd(node.children, path.slice(1));
+    }
+    for (var ei = 0; ei < extensionData.length; ei++) {
+      var root = extensionData[ei].root;
+      if (root && root.children) {
+        findCmd(root.children, pathArr);
+        if (cmd) break;
+      }
+    }
+    if (!cmd) { showToast("未找到命令"); return; }
+    var lines = cmd.split("\n");
+    var lineDelay = (toolbarConfig.line_delay || 0) * 1000;
+    function sendLine(i) {
+      if (i >= lines.length) return;
+      tab.ws.send(JSON.stringify({ type: "input", data: lines[i] + "\r" }));
+      if (i + 1 < lines.length && lineDelay > 0) {
+        setTimeout(function () { sendLine(i + 1); }, lineDelay);
+      } else {
+        sendLine(i + 1);
+      }
+    }
+    sendLine(0);
+    showToast("已发送: " + escapeHtml(toolName || cmd.substring(0, 30)));
+  }
+
+  function toggleToolbarGroup(gi) {
+    var tools = document.getElementById("toolbar-tools-" + gi);
+    var header = tools.previousElementSibling;
+    if (tools) {
+      tools.classList.toggle("hidden");
+      if (header) { header.classList.toggle("collapsed"); }
+    }
+  }
+
+  function updateToolbarState() {
+    var hasActive = currentSid !== null;
+    document.querySelectorAll(".tool-btn").forEach(function (btn) {
+      btn.disabled = !hasActive;
+    });
+  }
+
+  function sendToolCommand(gi, ti) {
+    var tab = getActiveTerminalTab();
+    if (!tab || !tab.ws || tab.ws.readyState !== WebSocket.OPEN) {
+      showToast("没有活动的终端会话");
+      return;
+    }
+    var group = (toolbarConfig.groups || [])[gi];
+    if (!group) return;
+    var tool = (group.tools || [])[ti];
+    if (!tool) return;
+    var cmd = tool.command || "";
+    var lines = cmd.split("\n");
+    var lineDelay = (toolbarConfig.line_delay || 0) * 1000;
+
+    function sendLine(i) {
+      if (i >= lines.length) return;
+      var line = lines[i];
+      // Send the line + Enter
+      tab.ws.send(JSON.stringify({ type: "input", data: line + "\r" }));
+      if (i + 1 < lines.length && lineDelay > 0) {
+        setTimeout(function () { sendLine(i + 1); }, lineDelay);
+      } else {
+        sendLine(i + 1);
+      }
+    }
+    sendLine(0);
+    showToast("已发送: " + escapeHtml(tool.name || cmd.substring(0, 30)));
+  }
+
+  // ---- Status badge ----
+  function updateStatus(status) {
+    var badge = document.getElementById("status-badge");
+    var text = document.getElementById("status-text");
+    if (status === 'connected') {
+      badge.className = "status-badge status-connected";
+      text.textContent = "已连接";
+    } else if (status === 'connecting') {
+      badge.className = "status-badge status-disconnected";
+      text.textContent = "连接中...";
+    } else {
+      badge.className = "status-badge status-disconnected";
+      text.textContent = status === 'idle' ? "就绪" : "未连接";
+    }
+  }
+
+  // ---- Toast ----
+  var toastTimer = null;
+  function showToast(message) {
+    var t = document.getElementById("toast");
+    t.textContent = message;
+    t.classList.add("show");
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () {
+      t.classList.remove("show");
+    }, 2500);
+  }
+
+  // ---- Utils ----
+  function escapeHtml(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  // ---- Expose to global ----
+  window.switchSidebarTab = switchSidebarTab;
+  window.detectProcess = detectProcess;
+  window.connectToPort = connectToPort;
+  window.connectManual = connectManual;
+  window.attachSession = attachSession;
+  window.shutdownSession = shutdownSession;
+  window.disconnectActive = disconnectActive;
+  window.saveActiveLog = saveActiveLog;
+  window.loadSessions = loadSessions;
+  window.openLogInTab = openLogInTab;
+  window.updateLogDisplayMode = updateLogDisplayMode;
+  window.toggleToolbarGroup = toggleToolbarGroup;
+  window.sendToolCommand = sendToolCommand;
+  window.toggleExtGroup = toggleExtGroup;
+  window.sendExtCommand = sendExtCommand;
+
+  // ---- Resize handler ----
+  var resizeTimer = null;
+  window.addEventListener("resize", function () {
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () {
+      var tab = getActiveTerminalTab();
+      if (tab && tab.fitAddon) {
+        fitTab(tab.id);
+        if (tab.ws && tab.ws.readyState === WebSocket.OPEN && tab.term) {
+          tab.ws.send(JSON.stringify({ type: "resize", cols: tab.term.cols, rows: tab.term.rows }));
+        }
+      }
+    }, 100);
+  });
+
+  // ---- Init ----
+  document.addEventListener("DOMContentLoaded", function () {
+    detectProcess();
+    loadSessions();
+    loadLogs();
+    loadToolbar();
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+flask>=3.0
+flask-sock>=0.6
+# paramiko must stay <4.0: v4+ removed legacy SHA-1 kex & ssh-rsa,
+# which embedded SSH servers (e.g. bh_am_pfe_tunnel) require.
+paramiko>=3.4,<4.0
+PyYAML>=6.0
+psutil>=5.9

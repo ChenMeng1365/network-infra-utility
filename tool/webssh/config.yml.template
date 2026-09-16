@@ -1,0 +1,84 @@
+# ===================================================================
+#                       WebSSH Configuration                        #
+# ===================================================================
+
+ssh:
+  # SSH login username
+  username: "your_name"
+  # SSH login password
+  password: "your_password"
+  # SSH target host
+  host: 127.0.0.1
+
+  # Auto-detect: find listening port from process name(s).
+  # Supports a single name (string) or a list of names.
+  # Leave empty or [] to use manual port below.
+  process_name: bh_am_pfe_tunnel
+  # Example for multiple processes:
+  # process_name:
+  #   - windterm
+  #   - plink
+
+  # Manual port (used when process_name is empty or detection fails)
+  # Set to null for auto-detect only
+  port: null
+
+  # SSH keepalive interval in seconds (0 = disable, passive mode).
+  keepalive_interval: 0
+
+web:
+  # Web server listen address (127.0.0.1 = localhost only)
+  host: 127.0.0.1
+  # Web server port
+  port: 9999
+
+terminal:
+  # Scrollback buffer size in rows (number of lines kept in memory
+  # for scrolling back). Set to 0 for unlimited (uses more memory
+  # during long sessions).
+  scrollback: 65535
+
+logs:
+  # Session log directory (relative to app.py)
+  dir: logs
+  # Auto-save session log when disconnected
+  auto_save: true
+  # Per-step interaction log written by the worker process itself
+  # (connect lifecycle, every input/output with escapes visible,
+  # resize, detach/attach, disconnect reason).
+  # Written to logs/interactive_<ts>_<sid>.log
+  interactive: true
+  # Verbose paramiko debug trace (kex/cipher negotiation, channel
+  # events). Written to logs/paramiko_<sid>.log. Set false to disable.
+  trace: true
+
+# -------------------------------------------------------------------
+# Toolbar groups: quick-send commands to the active terminal session.
+# Each group is a tree node; each tool is a button under the group.
+# Clicking a tool sends its script to the current session.
+# -------------------------------------------------------------------
+toolbar:
+  # Delay between sending each line of a multi-line script (seconds).
+  # 0 = send all lines at once (may overwhelm slow devices).
+  line_delay: 0.05
+  #
+  groups:
+    - name: 性能
+      tools:
+        - name: 资源实占
+          command: top
+  
+    - name: 诊断
+      tools:
+        - name: 查进程
+          command: ps -ef
+        - name: 查网络
+          command: netstat -tlnp
+        - name: 查内存
+          command: free -h
+        - name: 查硬盘
+          command: df -h
+#
+# OR
+#
+# toolbar: {}
