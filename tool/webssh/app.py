@@ -48,6 +48,15 @@ WORKER_SCRIPT = BASE_DIR / "ssh_worker.py"
 #  Flask app
 # ------------------------------------------------------------------ #
 app = Flask(__name__, template_folder=str(BASE_DIR / "templates"))
+# flask_sock doesn't expose max_message_size; patch simple_websocket
+# so large SFTP directory listings don't hit the default size limit.
+import simple_websocket
+_orig_server_init = simple_websocket.Server.__init__
+def _patched_server_init(self, *args, **kwargs):
+    kwargs.setdefault("max_message_size", 10 * 1024 * 1024)  # 10 MB
+    kwargs.setdefault("receive_bytes", 65536)
+    return _orig_server_init(self, *args, **kwargs)
+simple_websocket.Server.__init__ = _patched_server_init
 sock = Sock(app)
 
 
@@ -545,6 +554,36 @@ def api_extensions():
     return jsonify({"extensions": results})
 
 
+@app.route("/api/extensions/import", methods=["POST"])
+def api_extensions_import():
+    """Import a toolbar markdown file into extension/ (temporary import).
+
+    Allows adding a toolbar group set without touching the server
+    filesystem manually. Re-importing the same filename overwrites
+    the previous version. The page then just reloads toolbars.
+    """
+    if "file" not in request.files:
+        return jsonify({"error": "no file uploaded"}), 400
+    f = request.files["file"]
+    raw_name = f.filename or ""
+    if not raw_name.strip():
+        return jsonify({"error": "empty filename"}), 400
+    # sanitize: keep only the basename, force .md suffix
+    name = Path(raw_name).name
+    if not name.lower().endswith(".md"):
+        name += ".md"
+    # block Windows reserved device names just in case
+    if name.split(".")[0].upper() in {
+        "CON", "PRN", "AUX", "NUL",
+        *(f"COM{i}" for i in range(1, 10)),
+        *(f"LPT{i}" for i in range(1, 10)),
+    }:
+        return jsonify({"error": "invalid filename"}), 400
+    EXTENSION_DIR.mkdir(parents=True, exist_ok=True)
+    f.save(EXTENSION_DIR / name)
+    return jsonify({"ok": True, "name": name})
+
+
 # ------------------------------------------------------------------ #
 #  WebSocket  – thin proxy to worker control socket
 # ------------------------------------------------------------------ #
@@ -615,7 +654,7 @@ def ws_ssh(ws):
         buf = b""
         try:
             while True:
-                chunk = s.recv(4096)
+                chunk = s.recv(65536)
                 if not chunk:
                     break
                 buf += chunk
@@ -637,9 +676,13 @@ def ws_ssh(ws):
                         log_buffer.extend(
                             item.get("data", "") for item in ev.get("scrollback", [])
                         )
+                        # sid must reach the browser: without it the
+                        # frontend cannot track the new session and the
+                        # toolbar target state stays stale after connect.
                         ws.send(json.dumps({
                             "type": "status",
                             "data": "connected" if ev.get("state") == "connected" else ev.get("state", ""),
+                            "sid": ev.get("sid"),
                         }))
                     elif ev.get("ev") == "output":
                         data = ev.get("data", "")
@@ -654,6 +697,12 @@ def ws_ssh(ws):
                     elif ev.get("ev") == "bye":
                         ws.send(json.dumps({"type": "status", "data": "会话已由 worker 结束"}))
                         return
+                    else:
+                        # Forward any other event (sftp_list, sftp_progress,
+                        # sftp_done, sftp_error, sftp_home, sftp_mkdir_done)
+                        # as a typed message to the browser.
+                        ws.send(json.dumps({"type": ev.get("ev", "event"),
+                                            "data": ev}))
         except Exception as e:
             # worker control socket broke unexpectedly (SSH died, worker
             # exited, etc.) - tell the browser WHY instead of a bare close.
@@ -690,6 +739,23 @@ def ws_ssh(ws):
                 send_ctrl(s, {"op": "resize",
                               "cols": data.get("cols", 80),
                               "rows": data.get("rows", 24)})
+            elif data.get("type") == "sftp_list":
+                send_ctrl(s, {"op": "sftp_list", "path": data.get("path", "/")})
+            elif data.get("type") == "sftp_home":
+                send_ctrl(s, {"op": "sftp_home"})
+            elif data.get("type") == "sftp_upload_start":
+                send_ctrl(s, {"op": "sftp_upload_start",
+                              "path": data.get("path", ""),
+                              "size": data.get("size", 0)})
+            elif data.get("type") == "sftp_upload_chunk":
+                send_ctrl(s, {"op": "sftp_upload_chunk",
+                              "data": data.get("data", "")})
+            elif data.get("type") == "sftp_upload_end":
+                send_ctrl(s, {"op": "sftp_upload_end"})
+            elif data.get("type") == "sftp_mkdir":
+                send_ctrl(s, {"op": "sftp_mkdir", "path": data.get("path", "")})
+            elif data.get("type") == "sftp_download_start":
+                send_ctrl(s, {"op": "sftp_download_start", "path": data.get("path", "")})
     except Exception:
         pass
     finally:

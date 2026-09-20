@@ -428,6 +428,352 @@
       color: var(--text-secondary);
     }
     .ext-subgroup-header.collapsed .arrow { transform: rotate(-90deg); }
+
+    /* ---- Command Sender panel ---- */
+    .cmd-target-select {
+      width: 100%;
+      background: var(--bg-input);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 4px 8px;
+      font-size: 12px;
+      outline: none;
+      margin-bottom: 8px;
+    }
+    .cmd-textarea {
+      width: 100%;
+      min-height: 120px;
+      background: var(--bg-input);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 8px;
+      font-size: 12px;
+      font-family: Consolas, "Courier New", monospace;
+      outline: none;
+      resize: vertical;
+    }
+    .cmd-textarea:focus { border-color: var(--accent); }
+    .cmd-interval-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 8px 0;
+    }
+    .cmd-interval-row label { font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
+    .cmd-interval-row input[type="range"] {
+      flex: 1;
+      accent-color: var(--accent);
+    }
+    .cmd-interval-row .interval-val {
+      font-size: 11px;
+      color: var(--accent);
+      min-width: 50px;
+      text-align: right;
+    }
+
+    /* ---- File Browser panel ---- */
+    .file-session-select {
+      width: 100%;
+      background: var(--bg-input);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 4px 8px;
+      font-size: 12px;
+      outline: none;
+      margin-bottom: 8px;
+    }
+    .file-path-bar {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-bottom: 6px;
+    }
+    .file-path-bar input {
+      flex: 1;
+      background: var(--bg-input);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 4px 8px;
+      font-size: 12px;
+      outline: none;
+    }
+    .file-list {
+      max-height: 300px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg-input);
+    }
+    .file-list::-webkit-scrollbar { width: 6px; }
+    .file-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .file-entry {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      font-size: 12px;
+      cursor: pointer;
+      border-bottom: 1px solid rgba(48,54,61,.3);
+    }
+    .file-entry:last-child { border-bottom: none; }
+    .file-entry:hover { background: rgba(47,129,247,.1); }
+    .file-entry .file-icon { width: 14px; text-align: center; flex-shrink: 0; }
+    .file-entry .file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-entry .file-size { color: var(--text-secondary); font-size: 11px; flex-shrink: 0; }
+    .file-icon.dir { color: var(--accent); }
+    .file-icon.file { color: var(--text-secondary); }
+
+    .file-entry.selected { background: rgba(47,129,247,.22); }
+    .file-entry.selected .file-name { color: var(--accent); font-weight: 600; }
+    .file-card.selected {
+      background: rgba(47,129,247,.18);
+      outline: 1px solid var(--accent);
+    }
+    .file-card.selected .card-name { color: var(--accent); font-weight: 600; }
+
+    .file-action-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .file-action-row .file-selected-info {
+      flex: 1;
+      font-size: 11px;
+      color: var(--text-secondary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .upload-bar-fill.down { background: var(--warning); }
+    .upload-bar-fill.down.done { background: var(--success); }
+
+    .upload-rate-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      margin: 8px 0 2px;
+    }
+    .upload-rate-row label {
+      font-size: 12px;
+      color: var(--text-primary);
+      white-space: nowrap;
+      font-weight: 600;
+    }
+    .upload-rate-row .rate-val {
+      font-size: 13px;
+      color: var(--accent);
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .upload-rate-slider-row { margin: 0 0 2px; }
+    .upload-rate-slider-row input[type="range"] {
+      width: 100%;
+      height: 20px;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+    .upload-rate-marks {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: var(--text-secondary);
+      user-select: none;
+    }
+
+    /* ---- Upload progress bar ---- */
+    .upload-progress-area {
+      background: var(--bg-secondary);
+      border-top: 1px solid var(--border);
+      padding: 8px 12px;
+      max-height: 150px;
+      overflow-y: auto;
+      flex-shrink: 0;
+      display: none;
+    }
+    .upload-progress-area.visible { display: block; }
+    .upload-progress-area::-webkit-scrollbar { width: 6px; }
+    .upload-progress-area::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .upload-task {
+      margin-bottom: 8px;
+    }
+    .upload-task:last-child { margin-bottom: 0; }
+    .upload-task-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      margin-bottom: 3px;
+    }
+    .upload-task-name {
+      color: var(--text-primary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 60%;
+    }
+    .upload-task-info {
+      color: var(--text-secondary);
+      font-size: 11px;
+    }
+    .upload-bar {
+      height: 6px;
+      background: var(--bg-tertiary);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .upload-bar-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 3px;
+      transition: width .15s;
+      width: 0%;
+    }
+    .upload-bar-fill.done { background: var(--success); }
+    .upload-bar-fill.error { background: var(--error); }
+    .upload-dropzone {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(47,129,247,.15);
+      border: 3px dashed var(--accent);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 50;
+      pointer-events: none;
+      font-size: 18px;
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .upload-dropzone.active { display: flex; }
+
+    /* ---- File browser main area ---- */
+    .file-main-area {
+      flex: 1;
+      overflow: auto;
+      padding: 8px;
+      background: var(--bg-primary);
+    }
+    .file-main-area.hidden { display: none; }
+    .file-breadcrumb {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+    .file-breadcrumb-item {
+      cursor: pointer;
+      color: var(--accent);
+      font-size: 13px;
+    }
+    .file-breadcrumb-item:hover { text-decoration: underline; }
+    .file-breadcrumb-sep { color: var(--text-secondary); font-size: 13px; }
+    .file-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .file-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 90px;
+      padding: 8px 4px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: background .15s;
+    }
+    .file-card:hover { background: var(--bg-tertiary); }
+    .file-card .card-icon { font-size: 28px; margin-bottom: 4px; }
+    .file-card .card-name {
+      font-size: 11px;
+      text-align: center;
+      word-break: break-all;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+    .file-card .card-size { font-size: 10px; color: var(--text-secondary); }
+    .file-card-icon-dir { color: var(--accent); }
+    .file-card-icon-file { color: var(--text-secondary); }
+
+    /* ---- File main toolbar + detail table view ---- */
+    .file-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .file-toolbar .file-breadcrumb { margin-bottom: 0; flex: 1; }
+    .file-view-toggle {
+      display: flex;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+    .file-view-toggle .btn { padding: 3px 10px; font-size: 11px; }
+    .file-table {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: var(--bg-input);
+      font-size: 12px;
+    }
+    .file-table-head,
+    .file-table-row {
+      display: grid;
+      grid-template-columns: minmax(160px, 2fr) 90px 70px 130px 130px 110px;
+      gap: 8px;
+      align-items: center;
+      padding: 6px 10px;
+    }
+    .file-table-head {
+      background: var(--bg-tertiary);
+      color: var(--text-secondary);
+      font-weight: 600;
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+    }
+    .file-table-row {
+      cursor: pointer;
+      border-bottom: 1px solid rgba(48,54,61,.3);
+    }
+    .file-table-row:last-child { border-bottom: none; }
+    .file-table-row:hover { background: rgba(47,129,247,.1); }
+    .file-table-row.selected { background: rgba(47,129,247,.18); }
+    .file-table-row .t-name {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .file-table-row .table-icon { flex-shrink: 0; }
+    .file-table-row .t-size,
+    .file-table-row .t-type,
+    .file-table-row .t-mtime,
+    .file-table-row .t-owner,
+    .file-table-row .t-perm {
+      color: var(--text-secondary);
+      font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .file-table-row .t-perm { font-family: Consolas, "Courier New", monospace; }
   </style>
 </head>
 <body>
@@ -450,6 +796,8 @@
     <aside class="sidebar">
       <div class="sidebar-tabs">
         <button class="sidebar-tab active" data-tab="sessions" onclick="switchSidebarTab('sessions')">会话管理</button>
+        <button class="sidebar-tab" data-tab="command" onclick="switchSidebarTab('command')">命令发送</button>
+        <button class="sidebar-tab" data-tab="files" onclick="switchSidebarTab('files')">文件夹</button>
         <button class="sidebar-tab" data-tab="toolbar" onclick="switchSidebarTab('toolbar')">工具栏</button>
       </div>
 
@@ -503,8 +851,76 @@
         </div>
       </div>
 
+      <!-- Tab: Command Sender -->
+      <div class="sidebar-content" id="sidebar-command" style="display:none;">
+        <div class="panel">
+          <h2>命令发送</h2>
+          <select class="cmd-target-select" id="cmd-target-session">
+            <option value="">-- 选择目标会话 --</option>
+          </select>
+          <textarea class="cmd-textarea" id="cmd-input" placeholder="输入要发送的命令，支持多行...&#10;Alt+Enter 发送到选中会话" onkeydown="if(event.altKey&&event.key==='Enter'){event.preventDefault();sendCommandToSession();}"></textarea>
+          <div class="cmd-interval-row">
+            <label>命令间隔</label>
+            <input type="range" id="cmd-interval" min="0" max="2000" value="100" step="50">
+            <span class="interval-val" id="cmd-interval-val">100ms</span>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-sm" onclick="sendCommandToSession()">发送 (Alt+Enter)</button>
+            <button class="btn btn-sm btn-secondary" onclick="sendCommandToAll()">群体发送</button>
+            <button class="btn btn-sm btn-secondary" onclick="clearCmdInput()">清空</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab: File Browser -->
+      <div class="sidebar-content" id="sidebar-files" style="display:none;">
+        <div class="panel">
+          <h2>远程文件夹</h2>
+          <select class="file-session-select" id="file-session-select" onchange="onFileSessionChange()">
+            <option value="">-- 选择会话 --</option>
+          </select>
+          <div class="file-path-bar">
+            <input type="text" id="file-current-path" placeholder="/" readonly>
+            <button class="btn btn-sm btn-secondary" onclick="fileGoUp()">上级</button>
+            <button class="btn btn-sm btn-secondary" onclick="fileRefresh()">刷新</button>
+          </div>
+          <div class="file-list" id="file-list-sidebar">
+            <p class="info">请先选择会话</p>
+          </div>
+          <div class="file-action-row">
+            <span class="file-selected-info" id="file-selected-info">点击文件可选中/取消选中</span>
+            <button class="btn btn-sm" onclick="downloadSelectedFiles()">下载选中</button>
+            <button class="btn btn-sm btn-secondary" onclick="clearFileSelection()">清除</button>
+          </div>
+        </div>
+        <div class="panel">
+          <h2>上传设置</h2>
+          <div class="upload-rate-row">
+            <label>上传限速</label>
+            <span class="rate-val" id="upload-rate-val">不限速</span>
+          </div>
+          <div class="upload-rate-slider-row">
+            <input type="range" id="upload-rate-slider" min="0" max="15" value="0" step="1">
+          </div>
+          <div class="upload-rate-marks">
+            <span>不限</span><span>1K</span><span>50K</span><span>1M</span><span>10M</span><span>50M</span>
+          </div>
+          <p class="info" style="margin-top:6px;">将文件拖拽到主页面文件夹区域即可上传。</p>
+        </div>
+      </div>
+
       <!-- Tab: Toolbar -->
       <div class="sidebar-content" id="sidebar-toolbar" style="display:none;">
+        <div class="panel">
+          <h2>工具栏管理</h2>
+          <div class="btn-row">
+            <button class="btn btn-sm btn-secondary" onclick="loadToolbar(true)">刷新工具栏</button>
+            <button class="btn btn-sm btn-secondary" onclick="triggerImportExtension()">导入工具栏 (.md)</button>
+          </div>
+          <input type="file" id="ext-import-file" accept=".md,.markdown" style="display:none"
+                 onchange="importExtensionFile(this)">
+          <p class="info" style="margin-top:4px;">导入的 .md 会保存到服务器 extension/ 目录并立即生效。</p>
+        </div>
         <div id="toolbar-container">
           <p class="info">工具栏加载中...</p>
         </div>
@@ -520,6 +936,20 @@
       </div>
       <div class="terminal-pages" id="terminal-pages">
         <!-- terminal pages inserted here -->
+      </div>
+      <!-- File browser main area (shown when files tab is active) -->
+      <div class="file-main-area hidden" id="file-main-area">
+        <div id="file-main-content">
+          <p class="info">请从左侧"文件夹"标签页选择一个会话。</p>
+        </div>
+      </div>
+      <!-- Drag-and-drop overlay (shown over terminal/file area) -->
+      <div class="upload-dropzone" id="upload-dropzone">
+        释放文件以上传到当前目录
+      </div>
+      <!-- Upload progress area -->
+      <div class="upload-progress-area" id="upload-progress-area">
+        <div id="upload-tasks-container"></div>
       </div>
     </main>
   </div>
@@ -541,6 +971,12 @@
   var scrollbackLimit = 10000;
   var toolbarConfig = {};
   var currentSid = null;  // active session sid for toolbar send
+
+  // Upload rate ladder (Kbps). Index 0 = unlimited.
+  // A stepped slider keeps common rates (1K/10K/100K/1M/10M...) easy
+  // to hit precisely instead of a 1..10240 linear scale that is
+  // impossible to aim at.
+  var UPLOAD_RATE_STEPS = [0, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1024, 2048, 5120, 10240, 20480, 51200];
 
   // ---- Terminal init ----
   function newTerminal(scrollback) {
@@ -646,6 +1082,16 @@
     return tab;
   }
 
+  function formatTabLabel(tab) {
+    if (!tab || tab.type !== 'terminal') return tab ? tab.label : '';
+    var sidPart = tab.sid ? tab.sid.substring(0, 8) : '';
+    if (tab.port) {
+      return sidPart ? ('端口 ' + tab.port + ' · ' + sidPart) : ('端口 ' + tab.port);
+    }
+    if (sidPart) return '会话 ' + sidPart;
+    return tab.label || ('Tab ' + tab.id);
+  }
+
   function renderTerminalTabs() {
     var container = document.getElementById('terminal-tabs');
     container.innerHTML = '';
@@ -662,7 +1108,7 @@
       }
 
       var label = document.createElement('span');
-      label.textContent = tab.label;
+      label.textContent = formatTabLabel(tab);
       el.appendChild(label);
 
       var close = document.createElement('span');
@@ -693,7 +1139,6 @@
       currentSid = null;
       updateStatus('idle');
     }
-    updateToolbarState();
   }
 
   function closeTab(id) {
@@ -735,7 +1180,24 @@
       el.classList.toggle('active', el.dataset.tab === name);
     });
     document.getElementById('sidebar-sessions').style.display = name === 'sessions' ? '' : 'none';
+    document.getElementById('sidebar-command').style.display = name === 'command' ? '' : 'none';
+    document.getElementById('sidebar-files').style.display = name === 'files' ? '' : 'none';
     document.getElementById('sidebar-toolbar').style.display = name === 'toolbar' ? '' : 'none';
+
+    // Show/hide file main area vs terminal pages
+    var fileMain = document.getElementById('file-main-area');
+    var termPages = document.getElementById('terminal-pages');
+    var termTabs = document.getElementById('terminal-tabs');
+    if (name === 'files') {
+      fileMain.classList.remove('hidden');
+      termPages.style.display = 'none';
+      termTabs.style.display = 'none';
+      refreshFileSessionSelect();
+    } else {
+      fileMain.classList.add('hidden');
+      termPages.style.display = '';
+      termTabs.style.display = '';
+    }
   }
 
   // ---- Process detection ----
@@ -785,6 +1247,7 @@
   // ---- Connect (spawns a NEW worker session) ----
   function connectToPort(port) {
     var tab = createTerminalTab("端口 " + port);
+    tab.port = port;             // remember target port for label/selectors
     tab.status = 'connecting';
     renderTerminalTabs();
     tab.term.write("\r\n*** 正在连接端口 " + port + " ... ***\r\n");
@@ -825,15 +1288,30 @@
         tab.term.write(msg.data);
         tab.log.push(msg.data);
       } else if (msg.type === "status") {
+        // hello/state from the worker. The sid must be recorded here:
+        // new "connect" sessions are created without a sid and only
+        // the hello event tells us which worker session owns this tab.
+        if (msg.sid) {
+          tab.sid = msg.sid;
+          // Label now shows port + session id; refresh the tab header.
+          renderTerminalTabs();
+          refreshCmdSessionSelect();
+          refreshFileSessionSelect();
+        }
         if (msg.data === "connected") {
+          tab.status = 'connected';
           tab.term.write("\r\n*** SSH 已连接 ***\r\n");
         } else {
           tab.term.write("\r\n*** " + msg.data + " ***\r\n");
         }
+        updateTabStatus(tab);
       } else if (msg.type === "error") {
         tab.term.write("\r\n*** Error: " + msg.data + " ***\r\n");
         tab.status = 'disconnected';
         updateTabStatus(tab);
+      } else if (msg.type && msg.type.indexOf("sftp_") === 0) {
+        // SFTP events (sftp_home, sftp_list, sftp_progress, sftp_done, sftp_error, sftp_mkdir_done)
+        handleSftpEvent(msg);
       }
     };
 
@@ -870,8 +1348,13 @@
       }
     }
     renderTerminalTabs();
-    updateToolbarState();
   }
+
+  // NOTE: toolbar buttons are intentionally NEVER disabled.
+  // They must stay clickable at all times (even with no session yet);
+  // clicking without an active session shows a toast hint instead.
+  // This removes the old "grey until page refresh" behaviour that
+  // was caused by a sid that never reached the frontend.
 
   function connectManual() {
     var port = parseInt(document.getElementById("manual-port").value, 10);
@@ -1056,7 +1539,7 @@
   // ---- Toolbar ----
   var extensionData = []; // parsed extension toolbars
 
-  function loadToolbar() {
+  function loadToolbar(manual) {
     fetch("/api/config")
       .then(function (r) { return r.json(); })
       .then(function (data) {
@@ -1069,20 +1552,48 @@
         document.getElementById("toolbar-container").innerHTML =
           '<p class="info">工具栏加载失败</p>';
       });
-    loadExtensions();
+    loadExtensions(function () {
+      if (manual) showToast('工具栏已重新加载');
+    });
   }
 
-  function loadExtensions() {
+  function loadExtensions(done) {
     fetch("/api/extensions")
       .then(function (r) { return r.json(); })
       .then(function (data) {
         extensionData = data.extensions || [];
         renderExtensions();
+        if (done) done();
       })
       .catch(function () {
         document.getElementById("extension-container").innerHTML =
           '<p class="info">额外工具栏加载失败</p>';
+        if (done) done();
       });
+  }
+
+  // ---- Toolbar import (temporary .md import without touching files) ----
+  function triggerImportExtension() {
+    var input = document.getElementById('ext-import-file');
+    if (input) { input.value = ''; input.click(); }
+  }
+
+  function importExtensionFile(input) {
+    var file = input.files && input.files[0];
+    if (!file) return;
+    var fd = new FormData();
+    fd.append('file', file, file.name);
+    fetch('/api/extensions/import', { method: 'POST', body: fd })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.ok) {
+          showToast('已导入: ' + data.name + '，正在刷新工具栏');
+          loadToolbar();
+        } else {
+          showToast('导入失败: ' + (data.error || '未知错误'));
+        }
+      })
+      .catch(function (e) { showToast('导入失败: ' + e); });
   }
 
   function renderToolbar() {
@@ -1226,6 +1737,9 @@
     }
     sendLine(0);
     showToast("已发送: " + escapeHtml(toolName || cmd.substring(0, 30)));
+    // move focus back to the terminal so the button does not keep it
+    // (a focused button re-fires on Enter/Space -> accidental sends)
+    if (tab && tab.term) tab.term.focus();
   }
 
   function toggleToolbarGroup(gi) {
@@ -1235,13 +1749,6 @@
       tools.classList.toggle("hidden");
       if (header) { header.classList.toggle("collapsed"); }
     }
-  }
-
-  function updateToolbarState() {
-    var hasActive = currentSid !== null;
-    document.querySelectorAll(".tool-btn").forEach(function (btn) {
-      btn.disabled = !hasActive;
-    });
   }
 
   function sendToolCommand(gi, ti) {
@@ -1271,6 +1778,9 @@
     }
     sendLine(0);
     showToast("已发送: " + escapeHtml(tool.name || cmd.substring(0, 30)));
+    // move focus back to the terminal so the button does not keep it
+    // (a focused button re-fires on Enter/Space -> accidental sends)
+    if (tab && tab.term) tab.term.focus();
   }
 
   // ---- Status badge ----
@@ -1303,7 +1813,793 @@
 
   // ---- Utils ----
   function escapeHtml(s) {
-    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    // quotes are escaped too so the result is safe inside HTML attributes
+    // (data-name / data-fullpath / tooltip)
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  // ---- Command Sender ----
+  var cmdIntervalMs = 100;
+
+  function updateCmdInterval() {
+    var slider = document.getElementById('cmd-interval');
+    var val = document.getElementById('cmd-interval-val');
+    if (slider) cmdIntervalMs = parseInt(slider.value, 10);
+    if (val) val.textContent = cmdIntervalMs + 'ms';
+  }
+
+  function refreshCmdSessionSelect() {
+    var sel = document.getElementById('cmd-target-session');
+    if (!sel) return;
+    var current = sel.value;
+    var html = '<option value="">-- 选择目标会话 --</option>';
+    tabs.forEach(function (tab) {
+      if (tab.type === 'terminal' && tab.ws && tab.ws.readyState === WebSocket.OPEN) {
+        var label = formatTabLabel(tab);
+        html += '<option value="' + tab.id + '">' + escapeHtml(label) + '</option>';
+      }
+    });
+    sel.innerHTML = html;
+    if (current) sel.value = current;
+  }
+
+  function sendCommandToSession() {
+    var sel = document.getElementById('cmd-target-session');
+    var tabId = sel ? parseInt(sel.value, 10) : NaN;
+    if (!tabId) { showToast('请选择目标会话'); return; }
+    var tab = tabs.find(function (t) { return t.id === tabId; });
+    if (!tab || !tab.ws || tab.ws.readyState !== WebSocket.OPEN) {
+      showToast('目标会话未连接');
+      return;
+    }
+    var text = document.getElementById('cmd-input').value;
+    if (!text.trim()) { showToast('请输入命令'); return; }
+    sendCommandsToTab(tab, text);
+    showToast('已发送到: ' + formatTabLabel(tab));
+    // 发送后焦点回到目标会话终端，便于直接在远端继续操作
+    activateTab(tab.id);
+  }
+
+  function sendCommandToAll() {
+    var text = document.getElementById('cmd-input').value;
+    if (!text.trim()) { showToast('请输入命令'); return; }
+    var count = 0;
+    var first = null;
+    tabs.forEach(function (tab) {
+      if (tab.type === 'terminal' && tab.ws && tab.ws.readyState === WebSocket.OPEN) {
+        if (!first) first = tab;
+        sendCommandsToTab(tab, text);
+        count++;
+      }
+    });
+    if (count === 0) { showToast('没有已连接的会话'); return; }
+    showToast('已群体发送到 ' + count + ' 个会话');
+    // 群体发送后焦点回到第一个活跃会话终端
+    if (first) activateTab(first.id);
+  }
+
+  function sendCommandsToTab(tab, text) {
+    var lines = text.split('\n');
+    function sendLine(i) {
+      if (i >= lines.length) return;
+      if (tab.ws && tab.ws.readyState === WebSocket.OPEN) {
+        tab.ws.send(JSON.stringify({ type: 'input', data: lines[i] + '\r' }));
+      }
+      if (i + 1 < lines.length && cmdIntervalMs > 0) {
+        setTimeout(function () { sendLine(i + 1); }, cmdIntervalMs);
+      } else {
+        sendLine(i + 1);
+      }
+    }
+    sendLine(0);
+  }
+
+  function clearCmdInput() {
+    document.getElementById('cmd-input').value = '';
+  }
+
+  // ---- Alt+C / Alt+Z / Alt+V copy/cut/paste for terminals ----
+  function getClipboardText() {
+    // Try clipboard API (works in secure contexts; fallback below)
+    return '';
+  }
+
+  function setupTerminalShortcuts() {
+    document.addEventListener('keydown', function (e) {
+      // Only when a terminal tab is active
+      var tab = getActiveTerminalTab();
+      if (!tab) return;
+      if (!e.altKey) return;
+
+      if (e.key === 'c' || e.key === 'C') {
+        e.preventDefault();
+        // Copy selection
+        try {
+          var sel = tab.term.getSelection();
+          if (sel) {
+            navigator.clipboard.writeText(sel).then(function () {
+              showToast('已复制');
+            }).catch(function () {
+              showToast('复制失败 (浏览器限制)');
+            });
+          } else {
+            showToast('终端无选中内容');
+          }
+        } catch (err) {}
+      } else if (e.key === 'z' || e.key === 'Z') {
+        e.preventDefault();
+        // Cut = copy selection + clear line
+        try {
+          var sel2 = tab.term.getSelection();
+          if (sel2) {
+            navigator.clipboard.writeText(sel2).then(function () {
+              // Clear selected text by sending backspaces (approximate cut)
+              var lines = sel2.split('\n');
+              var bsCount = 0;
+              lines.forEach(function (l) { bsCount += l.length; });
+              bsCount += lines.length - 1; // for newlines
+              if (tab.ws && tab.ws.readyState === WebSocket.OPEN && bsCount > 0) {
+                var bs = '';
+                for (var i = 0; i < bsCount; i++) bs += '\b';
+                tab.ws.send(JSON.stringify({ type: 'input', data: bs }));
+              }
+              showToast('已剪切');
+            }).catch(function () {
+              showToast('剪切失败 (浏览器限制)');
+            });
+          } else {
+            showToast('终端无选中内容');
+          }
+        } catch (err) {}
+      } else if (e.key === 'v' || e.key === 'V') {
+        e.preventDefault();
+        // Paste from clipboard
+        navigator.clipboard.readText().then(function (clipText) {
+          if (clipText && tab.ws && tab.ws.readyState === WebSocket.OPEN) {
+            tab.ws.send(JSON.stringify({ type: 'input', data: clipText }));
+            showToast('已粘贴');
+          } else {
+            showToast('剪贴板为空');
+          }
+        }).catch(function () {
+          showToast('粘贴失败 (浏览器限制，需 HTTPS 或 localhost)');
+        });
+      }
+    });
+  }
+
+  // ---- File Browser ----
+  var fileCurrentPath = '/';
+  var fileSessionTab = null; // the tab whose ws is used for SFTP
+  var uploadRateLimit = 0;  // 0 = unlimited, >0 = bytes per second
+  var uploadTasks = {};      // id -> { name, path, size, uploaded, status }
+  var selectedFiles = new Set();  // full remote paths of selected files
+  var downloadQueue = [];         // pending remote paths to download (serial)
+  var downloadActive = false;
+  var fileViewMode = 'grid';  // 'grid' = icon cards, 'list' = detail table
+  var currentDownload = null;      // { taskId, path } of the running download
+  var downloadTasks = {};         // id -> { name, path, size, received, status, chunks }
+
+  function refreshFileSessionSelect() {
+    var sel = document.getElementById('file-session-select');
+    if (!sel) return;
+    var current = sel.value;
+    var html = '<option value="">-- 选择会话 --</option>';
+    tabs.forEach(function (tab) {
+      if (tab.type === 'terminal' && tab.ws && tab.ws.readyState === WebSocket.OPEN) {
+        var label = formatTabLabel(tab);
+        html += '<option value="' + tab.id + '">' + escapeHtml(label) + '</option>';
+      }
+    });
+    sel.innerHTML = html;
+    if (current) sel.value = current;
+  }
+
+  function onFileSessionChange() {
+    var sel = document.getElementById('file-session-select');
+    var tabId = parseInt(sel.value, 10);
+    fileSessionTab = tabs.find(function (t) { return t.id === tabId; });
+    if (fileSessionTab && fileSessionTab.ws && fileSessionTab.ws.readyState === WebSocket.OPEN) {
+      // Get home directory
+      fileSessionTab.ws.send(JSON.stringify({ type: 'sftp_home' }));
+    } else {
+      fileSessionTab = null;
+      showFileMainEmpty('请先选择一个已连接的会话');
+    }
+  }
+
+  function showFileMainEmpty(msg) {
+    var content = document.getElementById('file-main-content');
+    if (content) content.innerHTML = '<p class="info">' + escapeHtml(msg) + '</p>';
+    var sidebar = document.getElementById('file-list-sidebar');
+    if (sidebar) sidebar.innerHTML = '<p class="info">' + escapeHtml(msg) + '</p>';
+  }
+
+  function fileListRemote(path) {
+    if (!fileSessionTab || !fileSessionTab.ws || fileSessionTab.ws.readyState !== WebSocket.OPEN) return;
+    fileSessionTab.ws.send(JSON.stringify({ type: 'sftp_list', path: path }));
+  }
+
+  function renderFileList(path, entries) {
+    // navigating to a different directory invalidates the selection
+    if (path !== fileCurrentPath) selectedFiles.clear();
+    fileCurrentPath = path;
+    var pathInput = document.getElementById('file-current-path');
+    if (pathInput) pathInput.value = path;
+
+    // Sidebar list
+    var sidebar = document.getElementById('file-list-sidebar');
+    var html = '';
+    if (entries.length === 0) {
+      html = '<p class="info">空目录</p>';
+    }
+    entries.forEach(function (e) {
+      var icon = e.is_dir ? '\u{1F4C1}' : '\u{1F4C4}';
+      var sizeStr = e.is_dir ? '' : formatSize(e.size);
+      var nameAttr = escapeHtml(e.name);
+      var fullPath = (path === '/' ? '' : path) + '/' + e.name;
+      var selCls = (!e.is_dir && selectedFiles.has(fullPath)) ? ' selected' : '';
+      html += '<div class="file-entry' + selCls + '" data-name="' + nameAttr + '" data-isdir="' + e.is_dir + '" data-fullpath="' + escapeHtml(fullPath) + '">';
+      html += '  <span class="file-icon ' + (e.is_dir ? 'dir' : 'file') + '">' + icon + '</span>';
+      html += '  <span class="file-name">' + escapeHtml(e.name) + "</span>";
+      html += '  <span class="file-size">' + sizeStr + "</span>";
+      html += '</div>';
+    });
+    sidebar.innerHTML = html;
+    // Attach click handlers (avoid inline onclick quoting issues)
+    sidebar.querySelectorAll('.file-entry').forEach(function (el) {
+      el.addEventListener('click', function () {
+        fileEntryClick(this.getAttribute('data-name'), this.getAttribute('data-isdir') === 'true');
+      });
+    });
+
+    // Main area: toolbar (breadcrumb + view switch) then grid or detail table
+    var mainContent = document.getElementById('file-main-content');
+    var mainHtml = '<div class="file-toolbar">';
+    mainHtml += '  <div class="file-breadcrumb" id="file-breadcrumb"></div>';
+    mainHtml += '  <div class="file-view-toggle">';
+    mainHtml += '    <button class="btn btn-sm' + (fileViewMode === 'grid' ? ' btn-primary' : ' btn-secondary') + '" onclick="setFileViewMode(\'grid\')">图标视图</button>';
+    mainHtml += '    <button class="btn btn-sm' + (fileViewMode === 'list' ? ' btn-primary' : ' btn-secondary') + '" onclick="setFileViewMode(\'list\')">列表视图</button>';
+    mainHtml += '  </div>';
+    mainHtml += '</div>';
+
+    if (fileViewMode === 'list') {
+      // ---- Detail table: name | size | type | mtime | owner | perm ----
+      mainHtml += '<div class="file-table">';
+      mainHtml += '  <div class="file-table-head">';
+      mainHtml += '    <span class="t-name">名称</span>';
+      mainHtml += '    <span class="t-size">大小</span>';
+      mainHtml += '    <span class="t-type">类型</span>';
+      mainHtml += '    <span class="t-mtime">修改时间</span>';
+      mainHtml += '    <span class="t-owner">所有者</span>';
+      mainHtml += '    <span class="t-perm">权限</span>';
+      mainHtml += '  </div>';
+      entries.forEach(function (e) {
+        var icon = e.is_dir ? '\u{1F4C1}' : '\u{1F4C4}';
+        var fullPath = (path === '/' ? '' : path) + '/' + e.name;
+        var selCls = (!e.is_dir && selectedFiles.has(fullPath)) ? ' selected' : '';
+        var typeStr = e.is_dir ? '文件夹' : (e.is_link ? '链接' : '文件');
+        var sizeStr = e.is_dir ? '—' : formatSize(e.size);
+        var permStr = e.perm || '-';
+        mainHtml += '<div class="file-table-row' + selCls + '" data-name="' + escapeHtml(e.name) + '" data-isdir="' + e.is_dir + '" data-fullpath="' + escapeHtml(fullPath) + '">';
+        mainHtml += '  <span class="t-name"><span class="table-icon">' + icon + '</span>' + escapeHtml(e.name) + '</span>';
+        mainHtml += '  <span class="t-size">' + sizeStr + '</span>';
+        mainHtml += '  <span class="t-type">' + typeStr + '</span>';
+        mainHtml += '  <span class="t-mtime">' + escapeHtml(e.mtime_str || '') + '</span>';
+        mainHtml += '  <span class="t-owner">' + escapeHtml(e.owner || '') + (e.group ? ':' + escapeHtml(e.group) : '') + '</span>';
+        mainHtml += '  <span class="t-perm">' + escapeHtml(permStr) + '</span>';
+        mainHtml += '</div>';
+      });
+      mainHtml += '</div>';
+      if (entries.length === 0) {
+        mainHtml += '<p class="info">空目录</p>';
+      }
+      mainContent.innerHTML = mainHtml;
+      // Attach click handlers
+      mainContent.querySelectorAll('.file-table-row').forEach(function (el) {
+        el.addEventListener('click', function () {
+          fileEntryClick(this.getAttribute('data-name'), this.getAttribute('data-isdir') === 'true');
+        });
+      });
+    } else {
+      // ---- Icon grid ----
+      mainHtml += '<div class="file-grid">';
+      entries.forEach(function (e) {
+        var icon = e.is_dir ? '\u{1F4C1}' : '\u{1F4C4}';
+        var cls = e.is_dir ? 'file-card-icon-dir' : 'file-card-icon-file';
+        var nameAttr = escapeHtml(e.name);
+        var fullPath = (path === '/' ? '' : path) + '/' + e.name;
+        var selCls = (!e.is_dir && selectedFiles.has(fullPath)) ? ' selected' : '';
+        mainHtml += '<div class="file-card' + selCls + '" data-name="' + nameAttr + '" data-isdir="' + e.is_dir + '" data-fullpath="' + escapeHtml(fullPath) + '">';
+        mainHtml += '  <span class="card-icon ' + cls + '">' + icon + '</span>';
+        mainHtml += '  <span class="card-name">' + escapeHtml(e.name) + "</span>";
+        if (!e.is_dir) mainHtml += '  <span class="card-size">' + formatSize(e.size) + "</span>";
+        mainHtml += '</div>';
+      });
+      mainHtml += '</div>';
+      if (entries.length === 0) {
+        mainHtml += '<p class="info">空目录</p>';
+      }
+      mainContent.innerHTML = mainHtml;
+      // Attach click handlers
+      mainContent.querySelectorAll('.file-card').forEach(function (el) {
+        el.addEventListener('click', function () {
+          fileEntryClick(this.getAttribute('data-name'), this.getAttribute('data-isdir') === 'true');
+        });
+      });
+    }
+    renderBreadcrumb(path);
+    updateFileSelectionInfo();
+  }
+
+  function setFileViewMode(mode) {
+    fileViewMode = mode;
+    if (fileCurrentPath) fileListRemote(fileCurrentPath);
+  }
+
+  function renderBreadcrumb(path) {
+    var bc = document.getElementById('file-breadcrumb');
+    if (!bc) return;
+    var parts = path.split('/').filter(function (p) { return p; });
+    var html = '<span class="file-breadcrumb-item" data-path="/">/</span>';
+    var cur = '';
+    parts.forEach(function (part, i) {
+      cur += '/' + part;
+      html += '<span class="file-breadcrumb-sep">/</span>';
+      html += '<span class="file-breadcrumb-item" data-path="' + escapeHtml(cur) + '">' + escapeHtml(part) + '</span>';
+    });
+    bc.innerHTML = html;
+    // Attach click handlers for breadcrumb
+    var bcRoot = bc.querySelector('.file-breadcrumb-item');
+    if (bcRoot) bcRoot.addEventListener('click', function() { fileListRemote('/'); });
+    bc.querySelectorAll('.file-breadcrumb-item:not(:first-child)').forEach(function (el) {
+      el.addEventListener('click', function () {
+        fileListRemote(this.getAttribute('data-path'));
+      });
+    });
+  }
+
+  function fileEntryClick(name, isDir) {
+    if (isDir) {
+      var newPath = fileCurrentPath === '/' ? '/' + name : fileCurrentPath + '/' + name;
+      fileListRemote(newPath);
+    } else {
+      // toggle selection for download
+      var fullPath = (fileCurrentPath === '/' ? '' : fileCurrentPath) + '/' + name;
+      toggleFileSelected(fullPath);
+    }
+  }
+
+  // ---- File selection + download ----
+  function cssEscapeAttr(s) {
+    if (window.CSS && window.CSS.escape) return window.CSS.escape(s);
+    return String(s).replace(/["\\\]]/g, '\\$&');
+  }
+
+  function toggleFileSelected(fullPath) {
+    var sel;
+    if (selectedFiles.has(fullPath)) {
+      selectedFiles.delete(fullPath);
+      sel = false;
+    } else {
+      selectedFiles.add(fullPath);
+      sel = true;
+    }
+    // sync highlight across both views (sidebar list + main grid)
+    document.querySelectorAll('[data-fullpath="' + cssEscapeAttr(fullPath) + '"]').forEach(function (el) {
+      el.classList.toggle('selected', sel);
+    });
+    updateFileSelectionInfo();
+  }
+
+  function updateFileSelectionInfo() {
+    var info = document.getElementById('file-selected-info');
+    if (!info) return;
+    if (selectedFiles.size === 0) {
+      info.textContent = '点击文件可选中/取消选中';
+    } else {
+      info.textContent = '已选 ' + selectedFiles.size + ' 个文件';
+    }
+  }
+
+  function clearFileSelection() {
+    selectedFiles.clear();
+    document.querySelectorAll('.file-entry.selected, .file-card.selected').forEach(function (el) {
+      el.classList.remove('selected');
+    });
+    updateFileSelectionInfo();
+  }
+
+  function downloadSelectedFiles() {
+    if (selectedFiles.size === 0) { showToast('请先点击选中要下载的文件'); return; }
+    if (!fileSessionTab || !fileSessionTab.ws || fileSessionTab.ws.readyState !== WebSocket.OPEN) {
+      showToast('请先选择一个已连接的会话');
+      return;
+    }
+    var paths = Array.from(selectedFiles);
+    clearFileSelection();
+    downloadQueue = downloadQueue.concat(paths);
+    processDownloadQueue();
+  }
+
+  function processDownloadQueue() {
+    if (downloadActive) return;  // serial: one file at a time
+    var path = downloadQueue.shift();
+    if (!path) return;
+    if (!fileSessionTab || !fileSessionTab.ws || fileSessionTab.ws.readyState !== WebSocket.OPEN) {
+      downloadQueue = [];
+      showToast('会话已断开，下载中止');
+      return;
+    }
+    downloadActive = true;
+    var name = path.substring(path.lastIndexOf('/') + 1) || 'download.bin';
+    var taskId = 'd' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+    downloadTasks[taskId] = {
+      name: name, path: path, size: 0, received: 0,
+      status: 'downloading', chunks: []
+    };
+    currentDownload = { taskId: taskId, path: path };
+    renderTransferTasks();
+    showUploadProgress();
+    fileSessionTab.ws.send(JSON.stringify({ type: 'sftp_download_start', path: path }));
+  }
+
+  function finishDownload(ok, errMsg) {
+    var cd = currentDownload;
+    currentDownload = null;
+    downloadActive = false;
+    if (!cd) { processDownloadQueue(); return; }
+    var t = downloadTasks[cd.taskId];
+    if (t) {
+      if (ok) {
+        t.status = 'done';
+        try {
+          saveBlob(new Blob(t.chunks), t.name);
+          showToast('下载完成: ' + t.name);
+        } catch (e) {
+          showToast('保存文件失败: ' + e);
+        }
+        t.chunks = [];
+      } else {
+        t.status = 'error';
+        t.chunks = [];
+        showToast('下载失败: ' + (errMsg || t.name));
+      }
+    }
+    renderTransferTasks();
+    processDownloadQueue();  // next queued file, if any
+  }
+
+  function base64ToUint8Array(b64) {
+    var bin = atob(b64);
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+
+  function saveBlob(blob, filename) {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  }
+
+  function fileGoUp() {
+    if (fileCurrentPath === '/' || fileCurrentPath === '') return;
+    var parts = fileCurrentPath.replace(/\/$/, '').split('/');
+    parts.pop();
+    var up = parts.join('/') || '/';
+    fileListRemote(up);
+  }
+
+  function fileRefresh() {
+    if (fileCurrentPath) fileListRemote(fileCurrentPath);
+  }
+
+  function formatSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+    if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + ' MB';
+    return (bytes / 1073741824).toFixed(1) + ' GB';
+  }
+
+  // ---- Upload rate slider (stepped ladder, see UPLOAD_RATE_STEPS) ----
+  function updateUploadRate() {
+    var slider = document.getElementById('upload-rate-slider');
+    var val = document.getElementById('upload-rate-val');
+    if (!slider) return;
+    var idx = parseInt(slider.value, 10);
+    var v = (idx >= 0 && idx < UPLOAD_RATE_STEPS.length) ? UPLOAD_RATE_STEPS[idx] : 0;
+    if (!v) {
+      uploadRateLimit = 0;
+      if (val) val.textContent = '不限速';
+    } else {
+      uploadRateLimit = v * 1024; // Kbps -> bytes per second
+      if (v < 1024) {
+        if (val) val.textContent = v + ' Kbps';
+      } else {
+        if (val) val.textContent = (v / 1024) + ' Mbps';
+      }
+    }
+  }
+
+  // ---- Drag-and-drop upload ----
+  function setupDragDrop() {
+    var mainArea = document.querySelector('.terminal-area');
+    if (!mainArea) return;
+    var dropzone = document.getElementById('upload-dropzone');
+    var dragCounter = 0;
+
+    mainArea.addEventListener('dragenter', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounter++;
+      // Only show dropzone if files tab is active and session selected
+      var activeTab = document.querySelector('.sidebar-tab.active');
+      if (activeTab && activeTab.dataset.tab === 'files' && fileSessionTab) {
+        dropzone.classList.add('active');
+      }
+    });
+    mainArea.addEventListener('dragover', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    mainArea.addEventListener('dragleave', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounter--;
+      if (dragCounter <= 0) {
+        dragCounter = 0;
+        dropzone.classList.remove('active');
+      }
+    });
+    mainArea.addEventListener('drop', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounter = 0;
+      dropzone.classList.remove('active');
+      // Only upload if files tab is active
+      var activeTab = document.querySelector('.sidebar-tab.active');
+      if (!activeTab || activeTab.dataset.tab !== 'files') return;
+      if (!fileSessionTab || !fileSessionTab.ws || fileSessionTab.ws.readyState !== WebSocket.OPEN) {
+        showToast('请先选择一个已连接的会话');
+        return;
+      }
+      var files = e.dataTransfer.files;
+      if (!files || files.length === 0) return;
+      for (var i = 0; i < files.length; i++) {
+        uploadFileToRemote(files[i]);
+      }
+    });
+  }
+
+  function uploadFileToRemote(file) {
+    if (!fileSessionTab || !fileSessionTab.ws || fileSessionTab.ws.readyState !== WebSocket.OPEN) {
+      showToast('会话未连接');
+      return;
+    }
+    var remotePath = (fileCurrentPath === '/' ? '' : fileCurrentPath) + '/' + file.name;
+    var taskId = 'u' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+    uploadTasks[taskId] = {
+      name: file.name,
+      path: remotePath,
+      size: file.size,
+      uploaded: 0,
+      status: 'uploading'
+    };
+    renderTransferTasks();
+    showUploadProgress();
+
+    // Progress / done / error events arrive on this ws and are handled
+    // centrally in handleSftpEvent() - we must NOT replace ws.onmessage
+    // here (the old approach swallowed terminal output and download
+    // events for the whole duration of an upload).
+    var ws = fileSessionTab.ws;
+
+    // Start upload
+    ws.send(JSON.stringify({ type: 'sftp_upload_start', path: remotePath, size: file.size }));
+
+    // Read and send file in chunks
+    var chunkSize = 32768; // 32KB per chunk
+    var offset = 0;
+    var reader = new FileReader();
+    var lastTime = 0;
+
+    function readChunk() {
+      var end = Math.min(offset + chunkSize, file.size);
+      reader.readAsArrayBuffer(file.slice(offset, end));
+    }
+
+    reader.onload = function (e) {
+      var arr = new Uint8Array(e.target.result);
+      var b64 = arrayBufferToBase64(arr);
+
+      // Rate limiting
+      if (uploadRateLimit > 0) {
+        var now = Date.now();
+        var elapsed = (now - lastTime) / 1000;
+        var allowedBytes = uploadRateLimit * elapsed;
+        if (offset > 0 && arr.length > allowedBytes) {
+          var delayMs = Math.ceil((arr.length / uploadRateLimit - elapsed) * 1000);
+          setTimeout(function () {
+            lastTime = Date.now();
+            ws.send(JSON.stringify({ type: 'sftp_upload_chunk', data: b64 }));
+            offset += arr.length;
+            if (offset < file.size) {
+              readChunk();
+            } else {
+              ws.send(JSON.stringify({ type: 'sftp_upload_end' }));
+            }
+          }, delayMs);
+          return;
+        }
+      }
+
+      lastTime = Date.now();
+      ws.send(JSON.stringify({ type: 'sftp_upload_chunk', data: b64 }));
+      offset += arr.length;
+      if (offset < file.size) {
+        readChunk();
+      } else {
+        ws.send(JSON.stringify({ type: 'sftp_upload_end' }));
+      }
+    };
+
+    reader.onerror = function () {
+      uploadTasks[taskId].status = 'error';
+      renderTransferTasks();
+      showToast('读取文件失败: ' + file.name);
+    };
+
+    // Small delay to let upload_start be processed
+    setTimeout(readChunk, 200);
+  }
+
+  function arrayBufferToBase64(buf) {
+    var binary = '';
+    var bytes = new Uint8Array(buf);
+    var len = bytes.byteLength;
+    for (var i = 0; i < len; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+  }
+
+  function showUploadProgress() {
+    var area = document.getElementById('upload-progress-area');
+    if (area) area.classList.add('visible');
+  }
+
+  function hideUploadProgressIfEmpty() {
+    var hasActive = false;
+    Object.keys(uploadTasks).forEach(function (k) {
+      if (uploadTasks[k].status === 'uploading') hasActive = true;
+    });
+    Object.keys(downloadTasks).forEach(function (k) {
+      if (downloadTasks[k].status === 'downloading') hasActive = true;
+    });
+    if (!hasActive) {
+      var area = document.getElementById('upload-progress-area');
+      if (area) area.classList.remove('visible');
+    }
+  }
+
+  // Render all transfer tasks (uploads + downloads) in one progress area
+  function renderTransferTasks() {
+    var container = document.getElementById('upload-tasks-container');
+    if (!container) return;
+    var html = '';
+    Object.keys(uploadTasks).forEach(function (k) {
+      html += renderOneTransferTask(uploadTasks[k], false);
+    });
+    Object.keys(downloadTasks).forEach(function (k) {
+      html += renderOneTransferTask(downloadTasks[k], true);
+    });
+    container.innerHTML = html;
+    // Auto-hide if all done (after a delay)
+    hideUploadProgressIfEmpty();
+  }
+
+  function renderOneTransferTask(t, isDownload) {
+    var done = t.size > 0 ? (isDownload ? t.received : t.uploaded) : (t.status === 'done' ? t.size : 0);
+    var moved = isDownload ? (t.received || 0) : (t.uploaded || 0);
+    var pct = t.size > 0 ? Math.round(moved / t.size * 100) : (t.status === 'done' ? 100 : 0);
+    var fillClass = t.status === 'done' ? ' done' : (t.status === 'error' ? ' error' : '');
+    if (isDownload) fillClass = ' down' + fillClass;
+    var label = isDownload ? '下载' : '上传';
+    var infoStr = formatSize(moved) + ' / ' + formatSize(t.size) + ' (' + pct + '%)';
+    if (t.status === 'error') infoStr = label + '失败';
+    var html = '<div class="upload-task">';
+    html += '  <div class="upload-task-header">';
+    html += '    <span class="upload-task-name">[' + label + '] ' + escapeHtml(t.name) + '</span>';
+    html += '    <span class="upload-task-info">' + infoStr + '</span>';
+    html += '  </div>';
+    html += '  <div class="upload-bar"><div class="upload-bar-fill' + fillClass + '" style="width:' + pct + '%"></div></div>';
+    html += '</div>';
+    return html;
+  }
+
+  // ---- Handle SFTP events from worker ----
+  // Covers file listing, upload progress/done/error AND streaming
+  // downloads (begin/chunk/done/error). One central dispatcher so the
+  // websocket onmessage handler never has to be swapped out.
+  function handleSftpEvent(msg) {
+    var d = msg.data;
+    if (!d) return;
+    if (msg.type === 'sftp_home') {
+      fileListRemote(d.path || '/');
+    } else if (msg.type === 'sftp_list') {
+      renderFileList(d.path || '/', d.entries || []);
+    } else if (msg.type === 'sftp_progress') {
+      // upload progress (worker echoes after each chunk)
+      var ut = findUploadTask(d.path);
+      if (ut) {
+        ut.uploaded = d.uploaded || 0;
+        renderTransferTasks();
+      }
+    } else if (msg.type === 'sftp_done') {
+      var ut2 = findUploadTask(d.path);
+      if (ut2) {
+        ut2.uploaded = d.uploaded || ut2.uploaded;
+        ut2.status = 'done';
+        renderTransferTasks();
+        showToast('上传完成: ' + ut2.name);
+        fileRefresh();
+      }
+    } else if (msg.type === 'sftp_download_begin') {
+      if (currentDownload && d.path === currentDownload.path) {
+        downloadTasks[currentDownload.taskId].size = d.size || 0;
+        renderTransferTasks();
+      }
+    } else if (msg.type === 'sftp_download_chunk') {
+      if (currentDownload && d.path === currentDownload.path) {
+        var t = downloadTasks[currentDownload.taskId];
+        if (t && d.data) {
+          var bytes = base64ToUint8Array(d.data);
+          t.chunks.push(bytes);
+          t.received += bytes.length;
+          renderTransferTasks();
+        }
+      }
+    } else if (msg.type === 'sftp_download_done') {
+      if (currentDownload && d.path === currentDownload.path) {
+        finishDownload(true, '');
+      }
+    } else if (msg.type === 'sftp_download_error') {
+      if (currentDownload && d.path === currentDownload.path) {
+        finishDownload(false, d.msg || '');
+      }
+    } else if (msg.type === 'sftp_error') {
+      showToast(d.msg || 'SFTP 错误');
+      // mark the matching upload task as failed (worker's error text
+      // contains the remote path)
+      var matched = false;
+      Object.keys(uploadTasks).forEach(function (k) {
+        var t = uploadTasks[k];
+        if (t.status === 'uploading' && d.msg && d.msg.indexOf(t.path) >= 0) {
+          t.status = 'error';
+          matched = true;
+        }
+      });
+      if (matched) renderTransferTasks();
+      showFileMainEmpty(d.msg || '操作失败');
+    }
+  }
+
+  function findUploadTask(path) {
+    var found = null;
+    Object.keys(uploadTasks).forEach(function (k) {
+      var t = uploadTasks[k];
+      if (!found && t.status === 'uploading' && t.path === path) found = t;
+    });
+    return found;
   }
 
   // ---- Expose to global ----
@@ -1319,9 +2615,23 @@
   window.openLogInTab = openLogInTab;
   window.updateLogDisplayMode = updateLogDisplayMode;
   window.toggleToolbarGroup = toggleToolbarGroup;
+  window.loadToolbar = loadToolbar;
   window.sendToolCommand = sendToolCommand;
   window.toggleExtGroup = toggleExtGroup;
   window.sendExtCommand = sendExtCommand;
+  window.sendCommandToSession = sendCommandToSession;
+  window.sendCommandToAll = sendCommandToAll;
+  window.clearCmdInput = clearCmdInput;
+  window.onFileSessionChange = onFileSessionChange;
+  window.fileEntryClick = fileEntryClick;
+  window.fileGoUp = fileGoUp;
+  window.fileRefresh = fileRefresh;
+  window.fileListRemote = fileListRemote;
+  window.setFileViewMode = setFileViewMode;
+  window.downloadSelectedFiles = downloadSelectedFiles;
+  window.clearFileSelection = clearFileSelection;
+  window.triggerImportExtension = triggerImportExtension;
+  window.importExtensionFile = importExtensionFile;
 
   // ---- Resize handler ----
   var resizeTimer = null;
@@ -1344,6 +2654,19 @@
     loadSessions();
     loadLogs();
     loadToolbar();
+    setupTerminalShortcuts();
+    setupDragDrop();
+    // Wire up sliders
+    var cmdSlider = document.getElementById('cmd-interval');
+    if (cmdSlider) cmdSlider.addEventListener('input', updateCmdInterval);
+    var rateSlider = document.getElementById('upload-rate-slider');
+    if (rateSlider) rateSlider.addEventListener('input', updateUploadRate);
+    // Refresh session selects periodically (for command & file tabs)
+    setInterval(function () {
+      var activeTab = document.querySelector('.sidebar-tab.active');
+      if (activeTab && activeTab.dataset.tab === 'command') refreshCmdSessionSelect();
+      if (activeTab && activeTab.dataset.tab === 'files') refreshFileSessionSelect();
+    }, 3000);
   });
 })();
 </script>

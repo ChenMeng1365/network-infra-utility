@@ -34,9 +34,11 @@ Run:  python ssh_worker.py --id <sid> --port <ssh_port> --ctrl-port 0
 """
 
 import argparse
+import base64
 import json
 import os
 import socket
+import stat as stat_mod
 import sys
 import threading
 import time
@@ -46,6 +48,33 @@ from pathlib import Path
 
 import paramiko
 import yaml
+
+# Name resolution for uid/gid. On Windows hosts these modules don't
+# exist; fall back to the raw numeric id.
+try:
+    import pwd
+    import grp
+except ImportError:  # pragma: no cover - Windows
+    pwd = None
+    grp = None
+
+
+def _uid_name(uid):
+    if pwd is None:
+        return str(uid)
+    try:
+        return pwd.getpwuid(uid).pw_name
+    except (KeyError, OverflowError):
+        return str(uid)
+
+
+def _gid_name(gid):
+    if grp is None:
+        return str(gid)
+    try:
+        return grp.getgrgid(gid).gr_name
+    except (KeyError, OverflowError):
+        return str(gid)
 
 BASE_DIR = Path(__file__).parent.resolve()
 SESSIONS_DIR = BASE_DIR / "sessions"
@@ -194,6 +223,12 @@ class Worker:
         self.client = None
         self.channel = None
         self.transport = None
+        self.sftp = None                # lazily opened SFTPClient
+        self.upload_file = None         # current SFTPFile for upload
+        self.upload_path = None
+        self.upload_total = 0
+        self.upload_written = 0
+        self.download_thread = None     # active download thread (one at a time)
 
         self.lock = threading.Lock()
         self.clients = []              # attached control connections
@@ -252,6 +287,204 @@ class Worker:
             del self.scrollback[: len(self.scrollback) - 10000]
         self.ilog.log("OUT", repr(text))
         self.broadcast({"ev": "output", "data": text, "seq": self.seq})
+
+    # ---------- SFTP ----------
+    def get_sftp(self):
+        """Lazily open / cache an SFTPClient on the existing SSH transport."""
+        if self.sftp is None and self.client:
+            self.sftp = self.client.open_sftp()
+        return self.sftp
+
+    def sftp_list(self, path):
+        """List remote directory entries. Returns list of dicts with
+        permission / owner / modification-time metadata for the
+        detail-table view in the UI."""
+        sftp = self.get_sftp()
+        entries = []
+        for entry in sorted(sftp.listdir_attr(path), key=lambda a: a.filename):
+            mode = entry.st_mode or 0
+            is_dir = stat_mod.S_ISDIR(mode)
+            is_link = stat_mod.S_ISLNK(mode)
+            mtime = entry.st_mtime or 0
+            entries.append({
+                "name": entry.filename,
+                "size": entry.st_size or 0,
+                "is_dir": is_dir,
+                "is_link": is_link,
+                "mtime": mtime,
+                "mtime_str": self._fmt_mtime(mtime),
+                "mode": oct(mode),
+                "perm": self._perm_to_full(mode, is_dir, is_link),
+                "uid": getattr(entry, "st_uid", 0),
+                "gid": getattr(entry, "st_gid", 0),
+                "owner": _uid_name(getattr(entry, "st_uid", 0)),
+                "group": _gid_name(getattr(entry, "st_gid", 0)),
+            })
+        return entries
+
+    @staticmethod
+    def _fmt_mtime(mtime):
+        """Format mtime as YYYY-MM-DD HH:MM (server local time)."""
+        try:
+            return time.strftime("%Y-%m-%d %H:%M", time.localtime(mtime))
+        except (OverflowError, OSError, ValueError):
+            return "-"
+
+    @staticmethod
+    def _perm_to_str(mode):
+        """Convert a mode int to an rwxrwxrwx string (9 chars, '-' for unset)."""
+        if not mode:
+            return "---------"
+        bits = (
+            stat_mod.S_IRUSR, stat_mod.S_IWUSR, stat_mod.S_IXUSR,
+            stat_mod.S_IRGRP, stat_mod.S_IWGRP, stat_mod.S_IXGRP,
+            stat_mod.S_IROTH, stat_mod.S_IWOTH, stat_mod.S_IXOTH,
+        )
+        chars = ("r", "w", "x") * 3
+        out = []
+        for b, ch in zip(bits, chars):
+            out.append(ch if (mode & b) else "-")
+        return "".join(out)
+
+    @classmethod
+    def _perm_to_full(cls, mode, is_dir, is_link):
+        t = "l" if is_link else ("d" if is_dir else "-")
+        return t + cls._perm_to_str(mode)
+
+    def sftp_home(self):
+        """Get the SFTP default (home) directory."""
+        sftp = self.get_sftp()
+        try:
+            return sftp.normalize(".")
+        except Exception:
+            return "/"
+
+    def sftp_upload_start(self, remote_path, total_size):
+        """Open a remote file for writing (overwrite)."""
+        # Close any previous unfinished upload
+        if self.upload_file is not None:
+            try:
+                self.upload_file.close()
+            except Exception:
+                pass
+            self.upload_file = None
+        sftp = self.get_sftp()
+        self.upload_file = sftp.file(remote_path, "wb")
+        self.upload_file.set_pipelined(True)
+        self.upload_path = remote_path
+        self.upload_total = total_size
+        self.upload_written = 0
+        self.ilog.log("SFTP-UPLOAD-START", f"path={remote_path} size={total_size}")
+
+    def sftp_upload_chunk(self, b64data):
+        """Write a base64-encoded chunk to the current upload file."""
+        if self.upload_file is None:
+            return
+        raw = base64.b64decode(b64data)
+        self.upload_file.write(raw)
+        self.upload_written += len(raw)
+        self.broadcast({
+            "ev": "sftp_progress",
+            "path": self.upload_path,
+            "uploaded": self.upload_written,
+            "total": self.upload_total,
+        })
+
+    def sftp_upload_end(self):
+        """Flush and close the current upload file."""
+        if self.upload_file is not None:
+            try:
+                self.upload_file.flush()
+                self.upload_file.close()
+            except Exception:
+                pass
+            self.ilog.log("SFTP-UPLOAD-DONE",
+                          f"path={self.upload_path} written={self.upload_written}")
+            self.broadcast({
+                "ev": "sftp_done",
+                "path": self.upload_path,
+                "success": True,
+                "uploaded": self.upload_written,
+                "total": self.upload_total,
+            })
+            self.upload_file = None
+            self.upload_path = None
+
+    def sftp_mkdir(self, path):
+        sftp = self.get_sftp()
+        sftp.mkdir(path)
+
+    # ---------- SFTP download (streaming, chunked) ----------
+    #
+    # One download at a time per worker. The download runs on its own
+    # thread and streams base64 chunks over the control socket, so the
+    # terminal keeps working while a file transfer is in flight.
+    #
+    # Events broadcast to attached clients:
+    #   sftp_download_begin {path, size}
+    #   sftp_download_chunk {path, offset, total, data(b64)}
+    #   sftp_download_done  {path, size}
+    #   sftp_download_error {path, msg}
+    def sftp_download_start(self, remote_path):
+        if self.download_thread is not None and self.download_thread.is_alive():
+            raise RuntimeError("已有下载任务进行中，请稍候")
+        sftp = self.get_sftp()
+        st = sftp.stat(remote_path)
+        if stat_mod.S_ISDIR(st.st_mode or 0):
+            raise RuntimeError(f"{remote_path} 是目录，无法下载")
+        size = st.st_size or 0
+        self.ilog.log("SFTP-DOWNLOAD-START", f"path={remote_path} size={size}")
+        self.broadcast({"ev": "sftp_download_begin", "path": remote_path, "size": size})
+        t = threading.Thread(
+            target=self._download_loop, args=(remote_path, size), daemon=True
+        )
+        self.download_thread = t
+        t.start()
+
+    def _download_loop(self, remote_path, size):
+        try:
+            sftp = self.get_sftp()
+            f = sftp.file(remote_path, "rb")
+            try:
+                f.prefetch()
+                offset = 0
+                chunk_size = 64 * 1024
+                last_sent = time.time()
+                while offset < size:
+                    data = f.read(chunk_size)
+                    if not data:
+                        break
+                    self.broadcast({
+                        "ev": "sftp_download_chunk",
+                        "path": remote_path,
+                        "offset": offset,
+                        "total": size,
+                        "data": base64.b64encode(data).decode("ascii"),
+                    })
+                    offset += len(data)
+                    # be gentle with embedded relays: pace the stream a
+                    # little when the remote side is a slow device
+                    now = time.time()
+                    if now - last_sent < 0.002:
+                        time.sleep(0.002)
+                    last_sent = time.time()
+                self.broadcast({
+                    "ev": "sftp_download_done", "path": remote_path, "size": size
+                })
+                self.ilog.log("SFTP-DOWNLOAD-DONE",
+                              f"path={remote_path} sent={offset}/{size}")
+            finally:
+                try:
+                    f.close()
+                except Exception:
+                    pass
+        except Exception as e:
+            self.ilog.log("SFTP-ERROR", f"download {remote_path}: {e!r}")
+            self.broadcast({
+                "ev": "sftp_download_error", "path": remote_path, "msg": str(e)
+            })
+        finally:
+            self.download_thread = None
 
     # ---------- SSH ----------
     def connect_ssh(self):
@@ -388,6 +621,65 @@ class Worker:
                     self.stop.set()
                     self.broadcast({"ev": "bye"})
                     break
+                elif op == "sftp_list":
+                    path = msg.get("path", "/")
+                    try:
+                        entries = self.sftp_list(path)
+                        self.broadcast({"ev": "sftp_list", "path": path,
+                                        "entries": entries})
+                    except Exception as e:
+                        self.ilog.log("SFTP-ERROR", f"list {path}: {e!r}")
+                        self.broadcast({"ev": "sftp_error",
+                                        "msg": f"列出目录失败: {e}"})
+                elif op == "sftp_home":
+                    try:
+                        home = self.sftp_home()
+                        self.broadcast({"ev": "sftp_home", "path": home})
+                    except Exception as e:
+                        self.broadcast({"ev": "sftp_error",
+                                        "msg": f"获取主目录失败: {e}"})
+                elif op == "sftp_upload_start":
+                    remote_path = msg.get("path", "")
+                    total = int(msg.get("size", 0))
+                    try:
+                        self.sftp_upload_start(remote_path, total)
+                        self.broadcast({"ev": "sftp_progress", "path": remote_path,
+                                        "uploaded": 0, "total": total})
+                    except Exception as e:
+                        self.ilog.log("SFTP-ERROR", f"upload_start {remote_path}: {e!r}")
+                        self.broadcast({"ev": "sftp_error",
+                                        "msg": f"开始上传失败: {e}"})
+                elif op == "sftp_upload_chunk":
+                    try:
+                        self.sftp_upload_chunk(msg.get("data", ""))
+                    except Exception as e:
+                        self.ilog.log("SFTP-ERROR", f"upload_chunk: {e!r}")
+                        self.broadcast({"ev": "sftp_error",
+                                        "msg": f"上传数据写入失败: {e}"})
+                elif op == "sftp_upload_end":
+                    try:
+                        self.sftp_upload_end()
+                    except Exception as e:
+                        self.ilog.log("SFTP-ERROR", f"upload_end: {e!r}")
+                        self.broadcast({"ev": "sftp_error",
+                                        "msg": f"结束上传失败: {e}"})
+                elif op == "sftp_mkdir":
+                    path = msg.get("path", "")
+                    try:
+                        self.sftp_mkdir(path)
+                        self.broadcast({"ev": "sftp_mkdir_done", "path": path})
+                    except Exception as e:
+                        self.broadcast({"ev": "sftp_error",
+                                        "msg": f"创建目录失败: {e}"})
+                elif op == "sftp_download_start":
+                    remote_path = msg.get("path", "")
+                    try:
+                        self.sftp_download_start(remote_path)
+                    except Exception as e:
+                        self.ilog.log("SFTP-ERROR", f"download_start {remote_path}: {e!r}")
+                        self.broadcast({"ev": "sftp_download_error",
+                                        "path": remote_path,
+                                        "msg": f"开始下载失败: {e}"})
         except Exception as e:
             self.ilog.log("ERROR", f"control conn {addr} error: {e!r}")
         finally:
@@ -450,6 +742,16 @@ class Worker:
                 pass
             try:
                 self.channel.close()
+            except Exception:
+                pass
+            try:
+                if self.sftp:
+                    self.sftp.close()
+            except Exception:
+                pass
+            try:
+                if self.upload_file:
+                    self.upload_file.close()
             except Exception:
                 pass
             try:
