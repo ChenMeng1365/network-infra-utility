@@ -12,21 +12,25 @@
 #   geo-api                              # 默认 ./geodb/ + 0.0.0.0:9292
 #   geo-api -d /data/ipdb                # 指定数据文件目录
 #   geo-api -d /data/ipdb -a ./GEO_CACHE # 外带 GEO_CACHE 缓存目录
+#   geo-api --priority local,cache       # 关闭互联网兑底 (离线环境)
 #   geo-api -p 8080                      # 指定端口
 #   geo-api -b 127.0.0.1 -p 9292 -d ./ipdb
 #   geo-api --server puma                # 指定 Rack 服务器
 #   GEODB_DATA_DIR=/data/ipdb geo-api    # 通过环境变量指定数据目录
 #
 # 选项:
-#   -d, --data-dir DIR   IP 数据文件目录，默认 ./geodb/
-#   -a, --cache-dir DIR  GEO_CACHE 外带缓存目录 (geocacheYYYYMMDD.json,
-#                        ngeo-get -c 产出; addr 查询兑底)
-#   --priority ORDER     查询顺位 local,cache 的排列 (默认 local,cache)
-#   -b, --host HOST      监听地址，默认 0.0.0.0
-#   -p, --port PORT      监听端口，默认 9292
-#   -s, --server NAME    Rack 服务器，默认 puma
-#   -h, --help           显示帮助
-#   -v, --version        显示版本
+#   -d, --data-dir DIR     IP 数据文件目录，默认 ./geodb/
+#   -a, --cache-dir DIR    GEO_CACHE 外带缓存目录 (geocacheYYYYMMDD.json,
+#                          ngeo-get -c 产出; addr 查询兑底)
+#   --priority ORDER       查询顺位 local,cache,online 的排列
+#                          (默认 local,cache,online: 本地 → 缓存 → 互联网)
+#   --online-timeout SEC   互联网兑底 HTTP 超时秒数, 默认 8
+#                          (百度智能IP定位 → ip-api.com, 逐接口限速+熔断)
+#   -b, --host HOST        监听地址，默认 0.0.0.0
+#   -p, --port PORT        监听端口，默认 9292
+#   -s, --server NAME      Rack 服务器，默认 puma
+#   -h, --help             显示帮助
+#   -v, --version          显示版本
 #
 # 数据目录说明:
 #   目录下应至少存在 geoapi 期望的 JSON 文件之一 (asn.json / city-IPv4.json /
@@ -36,10 +40,18 @@
 #
 # 缓存目录说明:
 #   -a 指定的 GEO_CACHE 目录内存放 geocacheYYYYMMDD.json (客户端 ngeo-get
-#   查询产出)。addr 查询按 --priority 顺位 (默认 local,cache) 编排:
-#   先查本地 GeoLite2 库，查不到时用缓存定位信息兑底。目录不存在仅警告
-#   不退出 (首次使用可能尚无产出文件，后续创建自动感知); 目录内文件
-#   增删改自动感知，无需重启。缓存命中响应附 "cached": true 标记。
+#   查询产出)。addr 查询按 --priority 顺位 (默认 local,cache,online) 编排:
+#   先查本地 GeoLite2 库，再缓存兑底，最后互联网兜底 (百度智能IP定位 →
+#   ip-api.com)。目录不存在仅警告不退出 (首次使用可能尚无产出文件，
+#   后续创建自动感知); 目录内文件增删改自动感知，无需重启。
+#   缓存命中响应附 "cached": true 标记。
+#
+# 互联网兑底说明:
+#   顺位含 online 时，本地库与 GEO_CACHE 均无结果的 addr 查询自动走
+#   互联网 (百度智能IP定位 → ip-api.com 链式，百度查不出来才用 ip-api)，
+#   响应附 "online": true 标记。逐接口限速 (百度 1 QPS / ip-api 45 req/min)
+#   与熔断 (连续 3 次不可达暂停 60s) 内置，多线程安全不阻塞;
+#   离线环境用 --priority local,cache 关闭。
 
 require "optparse"
 require "rackup"
@@ -53,6 +65,7 @@ options = {
   data_dir: nil,
   cache_dir: nil,
   priority: nil,
+  online_timeout: nil,
   host: "0.0.0.0",
   port: 9292,
   server: "puma"
@@ -70,7 +83,8 @@ parser = OptionParser.new do |opts|
   BAN
   opts.on("-d", "--data-dir DIR", "IP 数据文件目录，默认 ./geodb/") { |v| options[:data_dir] = v }
   opts.on("-a", "--cache-dir DIR", "GEO_CACHE 外带缓存目录 (geocache*.json, 查询兑底)") { |v| options[:cache_dir] = v }
-  opts.on("--priority ORDER", "查询顺位 local,cache 排列 (默认 local,cache)") { |v| options[:priority] = v }
+  opts.on("--priority ORDER", "查询顺位 local,cache,online 排列 (默认 local,cache,online)") { |v| options[:priority] = v }
+  opts.on("--online-timeout SEC", Integer, "互联网兑底 HTTP 超时秒数 (默认 8)") { |v| options[:online_timeout] = v }
   opts.on("-b", "--host HOST", "监听地址，默认 0.0.0.0") { |v| options[:host] = v }
   opts.on("-p", "--port PORT", Integer, "监听端口，默认 9292") { |v| options[:port] = v }
   opts.on("-s", "--server NAME", "Rack 服务器，默认 puma") { |v| options[:server] = v }
@@ -109,15 +123,18 @@ if json_files.empty?
   exit 1
 end
 
-# ---- 缓存目录与顺位 ---------------------------------------------------------
-cache_order = options[:priority] || "local,cache"
+# ---- 顺位与互联网兑底 -------------------------------------------------------
+cache_order = options[:priority] || "local,cache,online"
 parts = cache_order.split(/[,\s]+/).map(&:strip).reject(&:empty?)
-unless !parts.empty? && parts.all? { |p| %w[local cache].include?(p) } && parts.uniq.size == parts.size
-  warn "✗ 无效顺位: #{cache_order} (geo-api 仅支持 local / cache 的排列)"
-  warn "  示例: --priority local,cache   (默认, 先本地库再缓存)"
+unless !parts.empty? && parts.all? { |p| %w[local cache online].include?(p) } && parts.uniq.size == parts.size
+  warn "✗ 无效顺位: #{cache_order} (geo-api 仅支持 local / cache / online 的排列)"
+  warn "  示例: --priority local,cache,online   (默认, 本地 → 缓存 → 互联网)"
+  warn "        --priority local,cache       (离线环境, 关闭互联网兑底)"
   exit 1
 end
 ENV["GEODB_CACHE_ORDER"] = parts.join(",")
+
+ENV["GEODB_ONLINE_TIMEOUT"] = options[:online_timeout].to_s if options[:online_timeout]
 
 cache_dir = nil
 if options[:cache_dir]
@@ -135,7 +152,11 @@ puts "│ 数据目录: #{data_dir} "
 puts "│ #{json_files.length}个数据文件：#{json_files.map { |f| File.basename(f) }.join(' ')}"
 if cache_dir
   n_cache = Dir.glob(File.join(cache_dir, "geocache*.json")).select { |f| /\Ageocache\d{8}\.json\z/ =~ File.basename(f) }.size
-  puts "│ 缓存目录: #{cache_dir} (#{n_cache}个缓存文件, 兑底顺位: #{parts.join(',')})"
+  puts "│ 缓存目录: #{cache_dir} (#{n_cache}个缓存文件)"
+end
+puts "│ 查询顺位: #{parts.join(',')}"
+if parts.include?("online")
+  puts "│ 互联网兑底: 百度智能IP定位 → ip-api.com (限速+熔断, 超时 #{ENV['GEODB_ONLINE_TIMEOUT'] || 8}s)"
 end
 puts "│ 监听: http://#{options[:host]}:#{options[:port]}"
 puts "│ 服务: #{options[:server]}"

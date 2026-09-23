@@ -1,14 +1,3 @@
----
-AIGC:
-  ContentProducer: '001191110102MAD55U9H0F10002'
-  ContentPropagator: '001191110102MAD55U9H0F10002'
-  Label: '1'
-  ProduceID: '88e1794b-cd8d-483e-b3d2-ee4485fccf96'
-  PropagateID: '88e1794b-cd8d-483e-b3d2-ee4485fccf96'
-  ReservedCode1: '20f6bf17-f91c-4c4c-b721-e45f1eb19345'
-  ReservedCode2: '20f6bf17-f91c-4c4c-b721-e45f1eb19345'
----
-
 # Changelog
 
 All notable changes to this project will be documented in this file.
@@ -19,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
+- 互联网查询集成百度智能IP定位接口（qifu.baidu.com 企业服务平台"智能IP定位"网页同源接口，需带 `Referer` 头）：`gen-get` / `ngeo-get` 的互联网查询链改为**百度智能IP定位 → ip-api.com**——百度优先（国内省市/运营商/场景定位更准，`scene` 字段直接映射用途），只有查不出来（确认无归属 / 定位不到省市 / 接口不可达）才用 ip-api.com 兜底，两方结果字段级叠加（百度优先，ip-api.com 补 ASN 与国外城市）；`source` 标注 `gen-get(baidu)` / `gen-get(ip-api.com)` / `gen-get(baidu+ip-api.com)`；`--baidu-api` 可覆盖百度接口。
+- `geo-api` 服务端 addr 查询新增互联网兑底源：`--priority` 扩展为 `local,cache,online` 排列（默认 `local,cache,online`，离线环境 `--priority local,cache` 关闭），本地库与 GEO_CACHE 均无结果时自动走互联网兜底（百度 → ip-api.com 链式），响应附加 `"online": true` 标记；新增 `--online-timeout`（默认 8s）；asn 接口兑底直查 ip-api.com（百度无 ASN 数据）。
+- 服务端 addr 查询引入**字段完整性判定**："有网段但无省市"的本地记录（如 `60.188.0.0/15` 仅命中国家）不再视为命中，继续后续源兑底（百度可补齐省市），各源均不完整时返回首个有结果者。
+
+### Changed
+
+- `OnlineClient` 重构为双接口链式架构，内部新增 `Provider`（单接口限速 + 熔断器，线程安全）：每接口独立限速（百度 1 QPS / ip-api.com 1.4s 对齐 45 req/min），连续 3 次不可达后 60s 冷却期内直接返回 `unreachable` 不发包不等待；**HTTP 请求在限速锁外执行**（open/read 超时兜底），多线程下发包频率受限但收包互不阻塞，不会阻塞死；`--api` 显式覆盖时进入单接口模式（只查指定接口，跳过百度链），保持原有自定义接口与离线测试行为兼容。
+- 百度已确认无归属（私有/保留地址）时，即使 ip-api.com 不可达也返回 `empty`（百度结论优先，可正常落缓存，避免私有地址反复重查超时）。
+- `NGeo#online_with_breaker` 熔断锁粒度优化：锁只覆盖状态读写，HTTP 请求在锁外执行，不再串行化多线程的互联网查询。
+- ngeo-get 组装结果时 `isp` 计算优化：`asn_org` 为空（如纯互联网结果，百度不提供 ASN）时沿用已归一化的运营商字段，不再丢失百度返回的运营商信息。
+- `GeoQuery::GeoCache.to_geolite` 新增 `tag:` 参数（默认 `"cached"`，互联网兑底用 `"online"`），统一缓存与互联网兑底的响应转换。
+
+### Added（既有）
 
 - 新增 `gen-get` 命令行工具：调用免费互联网接口查询 IP 归属，默认 ip-api.com 及其参数（`lang=zh-CN` + `status,message,country,regionName,city,isp,as,query`，`message` 为诊断扩展），内置 45 req/min 限速（最小间隔 1.4s）与本地 JSON 缓存；互联网不通时返回明确的 `unreachable`（互联网查询不可达）空结果状态并区分于 `empty`（确认无归属，如私有地址）。
 - 新增 `ngeo-get` 命令行工具：综合 geo-get（本地 geo-api）与 gen-get（互联网）两个数据源——本地接口可用时优先使用；归属不满意（省/市/ASN 缺失）时自动补互联网查询；本地与互联网结果字段级叠加（省/城市/用途 IDC·云等准确字段择优，网段保留本地，运营商按合并后组织名归一化）。结果状态可信度链：`unreachable < local-partial < empty < local < online < merged`，互联网不可达时本地部分结果保留；连续 3 次不可达触发 60s 熔断。

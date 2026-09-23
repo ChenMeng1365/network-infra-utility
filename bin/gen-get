@@ -4,9 +4,14 @@
 #
 # gen-get — network-infra-utility 的互联网 IP 归属查询工具 (geo 系列)
 #
-# 调用免费互联网接口查询 IP 归属, 默认 ip-api.com 及其参数
-# (lang=zh-CN, fields=status,message,country,regionName,city,isp,as,query),
-# 内置 45 req/min 限速与本地 JSON 缓存。
+# 互联网查询链 (默认): 百度智能IP定位 → ip-api.com
+#   1. 百度智能IP定位 (qifu.baidu.com 企业服务平台接口, 需带 Referer):
+#      国内省市/运营商/场景 (IDC/家宽等) 定位更准; 省市定位成功即返回
+#   2. ip-api.com (免费, 全球覆盖, 提供 ASN 与国外城市):
+#      仅当百度查不出来 (确认无归属 / 定位不到省市 / 接口不可达) 时尝试,
+#      百度部分结果与 ip-api 结果字段级叠加 (百度优先)
+#   两个接口各自限速 (百度 1 QPS / ip-api 45 req/min) 与熔断
+#   (连续 3 次不可达暂停 60s), 多线程安全不阻塞; 本地 JSON 缓存。
 #
 # 用法:
 #   gen-get 8.8.8.8                    # 单 IP, 文字格式
@@ -21,7 +26,8 @@
 #   -j, --json         JSON 格式输出 (多 IP 时输出数组)
 #   --refresh          忽略缓存强制重查
 #   --no-cache         查询结果不写入缓存
-#   --api URL          覆盖默认接口 ({ip} 占位符)
+#   --api URL          覆盖互联网接口为单接口模式 ({ip} 占位符, 跳过百度链)
+#   --baidu-api URL    覆盖百度智能IP定位接口 ({ip} 占位符)
 #   --timeout SEC      HTTP 超时秒数, 默认 10
 #   --cache-stats      查看缓存统计后退出
 #   -h, --help         显示帮助
@@ -30,21 +36,27 @@
 # 退出码: 0 = 查询完成 (含确认无归属); 1 = IP 不合法; 2 = 互联网查询不可达
 #
 # 结果状态 (state):
-#   ok           互联网查询成功
+#   ok           互联网查询成功 (百度 / ip-api.com / 两方叠加)
 #   empty        互联网确认无归属 (如私有/保留地址)
 #   unreachable  互联网查询不可达 (网络不通/超时/限速), 返回空结果状态
 #   invalid      IP 不合法
+#
+# 结果来源 (source):
+#   gen-get(baidu)             百度智能IP定位命中
+#   gen-get(ip-api.com)        ip-api.com 命中 (百度不可达或确认无归属)
+#   gen-get(baidu+ip-api.com)  百度部分结果 + ip-api.com 叠加 (典型国外 IP)
 
 require "optparse"
 require "json"
 require_relative "../service/geoquery/geoquery"
 
-options = { format: :text, refresh: false, no_cache: false, timeout: 10, api: nil }
+options = { format: :text, refresh: false, no_cache: false, timeout: 10,
+             api: nil, baidu_api: nil }
 parser = OptionParser.new do |opts|
   opts.banner = <<~BAN
     gen-get — 互联网 IP 归属查询工具 (network-infra-utility)
 
-    默认接口: ip-api.com 免费接口 (限 45 req/min, 无需 Key)
+    查询链: 百度智能IP定位 → ip-api.com (百度优先, 查不出来才用 ip-api)
     用法:
       gen-get <IP> [options]
       gen-get 8.8.8.8 -j
@@ -56,7 +68,8 @@ parser = OptionParser.new do |opts|
   opts.on("-j", "--json", "JSON 格式输出")            { options[:format] = :json }
   opts.on("--refresh", "忽略缓存强制重查")             { options[:refresh] = true }
   opts.on("--no-cache", "查询结果不写入缓存")          { options[:no_cache] = true }
-  opts.on("--api URL", "覆盖默认互联网接口 ({ip} 占位符)") { |v| options[:api] = v }
+  opts.on("--api URL", "覆盖互联网接口为单接口模式 ({ip} 占位符, 跳过百度链)") { |v| options[:api] = v }
+  opts.on("--baidu-api URL", "覆盖百度智能IP定位接口 ({ip} 占位符)") { |v| options[:baidu_api] = v }
   opts.on("--timeout SEC", Integer, "HTTP 超时秒数 (默认 10)") { |v| options[:timeout] = v }
   opts.on("--cache-stats", "查看缓存统计") do
     cache = GeoQuery::Cache.new(File.join(GeoQuery::Cache.default_dir, "gen-cache.json"))
@@ -91,7 +104,8 @@ if ips.empty?
 end
 
 cache = GeoQuery::Cache.new(File.join(GeoQuery::Cache.default_dir, "gen-cache.json"))
-client = GeoQuery::OnlineClient.new(api: options[:api], timeout: options[:timeout])
+client = GeoQuery::OnlineClient.new(api: options[:api], baidu_api: options[:baidu_api],
+                                    timeout: options[:timeout])
 
 results = ips.map do |ip|
   result = nil
@@ -115,7 +129,8 @@ when :json
   puts JSON.pretty_generate(results.size == 1 ? results.first : results)
 when :text
   results.each do |r|
-    puts "查询 IP: #{r['ip']}    接口: ip-api.com (免费, 限 45 req/min)"
+    api_label = options[:api] ? "自定义接口 (单接口模式)" : "百度智能IP定位 → ip-api.com (百度优先)"
+    puts "查询 IP: #{r['ip']}    接口: #{api_label}"
     puts "-" * 64
     case r["state"]
     when "ok"
@@ -124,6 +139,7 @@ when :text
       puts "运营商: #{r['isp']}    用途: #{r['usage']}"
       puts "ASN: #{r['asn'].empty? ? '未知' : "AS#{r['asn']}"} #{r['asn_org']}"
       puts "状态: ok    来源: #{r['source']}    #{cached}"
+      puts "提示: #{r['message']}" unless r["message"].to_s.empty?
     when "empty"
       puts "互联网确认无该 IP 归属数据 (#{r['message']})"
       puts "状态: empty    来源: #{r['source']}"

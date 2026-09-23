@@ -51,9 +51,10 @@ module GeoQuery
       parts
     end
 
-    # 统一 schema → geo-api 接口的 GeoLite2 风格响应 (服务端缓存命中时用)。
+    # 统一 schema → geo-api 接口的 GeoLite2 风格响应 (服务端兜底时用)。
     # 对应字段缺失时返回 nil (视作该接口无数据, 由调用方继续下一数据源)。
-    def self.to_geolite(kind, hit)
+    # tag: 响应附加标记键名, 缓存命中用 "cached", 互联网兜底用 "online"。
+    def self.to_geolite(kind, hit, tag: "cached")
       case kind
       when :asn
         return nil if hit["asn"].to_s.empty?
@@ -61,7 +62,7 @@ module GeoQuery
           "network" => hit["network"].to_s,
           "autonomous_system_number" => hit["asn"].to_s,
           "autonomous_system_organization" => hit["asn_org"].to_s,
-          "cached" => true,
+          tag => true,
         }
       when :city
         return nil if hit["province"].to_s.empty? && hit["city"].to_s.empty?
@@ -69,13 +70,13 @@ module GeoQuery
         g["country_name"] = hit["country"].to_s unless hit["country"].to_s.empty?
         g["subdivision_1_name"] = hit["province"].to_s unless hit["province"].to_s.empty?
         g["city_namezh"] = hit["city"].to_s unless hit["city"].to_s.empty?
-        { "network" => hit["network"].to_s, "geoname" => g, "cached" => true }
+        { "network" => hit["network"].to_s, "geoname" => g, tag => true }
       when :country
         return nil if hit["country"].to_s.empty?
         {
           "network" => hit["network"].to_s,
           "geoname" => { "country_name" => hit["country"].to_s },
-          "cached" => true,
+          tag => true,
         }
       end
     end

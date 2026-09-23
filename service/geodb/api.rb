@@ -9,11 +9,14 @@
 #
 # GEO_CACHE 外带缓存 (bin/geo-api -a 或环境变量 GEODB_CACHE_DIR 指定目录):
 #   目录内 geocacheYYYYMMDD.json (ngeo-get -c 产出) 作为缓存定位信息。
-#   addr 查询按 GEODB_CACHE_ORDER 顺位 (默认 local,cache) 编排:
-#   先查本地 GeoLite2 库, 查不到时用缓存记录兑底 (统一 schema 转为
-#   各接口的 GeoLite2 风格响应, 对客户端透明)。目录内文件增删改自动感知。
+#   addr 查询按 GEODB_CACHE_ORDER 顺位 (默认 local,cache,online) 编排:
+#   先查本地 GeoLite2 库, 再用缓存记录兑底, 最后互联网兜底
+#   (百度智能IP定位 → ip-api.com, 统一 schema 转为各接口的 GeoLite2 风格
+#   响应, 对客户端透明; 逐接口限速 + 熔断, 超时由 GEODB_ONLINE_TIMEOUT 控制)。
+#   目录内文件增删改自动感知。
 ['cc','CasetDown/casetdown','network','roda'].each{|mod| require mod}
 require_relative '../geoquery/geo_cache'
+require_relative '../geoquery/online'
 
 module GeoDB
   module_function
@@ -35,6 +38,8 @@ module GeoDB
   @lock = Mutex.new
   # GEO_CACHE 外带缓存实例 (GEODB_CACHE_DIR 设置时启用)
   @geo_cache = nil
+  # 互联网兑底客户端 (百度智能IP定位→ip-api.com, 惰性单例, 进程内共享)
+  @online_client = nil
 
   # ---- GEO_CACHE 外带缓存 -------------------------------------------------
 
@@ -46,12 +51,34 @@ module GeoDB
     end
   end
 
-  # 查询顺位: local (GeoLite2 库) 与 cache (GEO_CACHE) 的适用顺序。
-  # GEODB_CACHE_ORDER 指定 (bin/geo-api --priority), 默认 local,cache。
+  # 互联网兑底客户端 (进程内单例; OnlineClient 内置逐接口限速/熔断,
+  # 线程安全, 多线程请求按限速排队但 HTTP 互不阻塞;
+  # 超时默认 8s, GEODB_ONLINE_TIMEOUT 覆盖 — 服务端响应不宜久等)
+  def online_client
+    @online_client ||= begin
+      t = ENV['GEODB_ONLINE_TIMEOUT'].to_s
+      GeoQuery::OnlineClient.new(timeout: t.empty? ? 8 : t.to_i)
+    end
+  end
+
+  # ASN 接口专用互联网客户端 (单接口模式, 直查 ip-api.com):
+  # 百度智能IP定位不提供 ASN 数据, asn 兑底查百度无意义且浪费限速配额
+  def asn_online_client
+    @asn_online_client ||= begin
+      t = ENV['GEODB_ONLINE_TIMEOUT'].to_s
+      GeoQuery::OnlineClient.new(api: GeoQuery::OnlineClient::DEFAULT_API,
+                                 timeout: t.empty? ? 8 : t.to_i)
+    end
+  end
+
+  # 查询顺位: local (GeoLite2 库) / cache (GEO_CACHE) / online (互联网)
+  # 的适用顺序。GEODB_CACHE_ORDER 指定 (bin/geo-api --priority),
+  # 默认 local,cache,online (本地无结果时互联网兜底; 离线环境可用
+  # --priority local,cache 关闭互联网)。
   def cache_order
     parts = ENV['GEODB_CACHE_ORDER'].to_s.split(/[,\s]+/).map(&:strip).reject(&:empty?)
-    parts = %w[local cache] if parts.empty?
-    parts.select { |p| %w[local cache].include?(p) }.uniq
+    parts = %w[local cache online] if parts.empty?
+    parts.select { |p| %w[local cache online].include?(p) }.uniq
   end
 
   # ---- 加载 ---------------------------------------------------------------
@@ -139,18 +166,41 @@ module GeoDB
     (number >= s && number <= e) ? r : nil
   end
 
-  # ---- addr 查询编排 (本地库 + GEO_CACHE) ---------------------------------
+  # ---- addr 查询编排 (本地库 + GEO_CACHE + 互联网) -------------------------
 
-  # 按 cache_order 顺位查本地库与 GEO_CACHE (kind: :asn/:city/:country)
+  # 按顺位查 local 库 / GEO_CACHE / 互联网 (kind: :asn/:city/:country)。
+  # "字段完整"即停 (本地库常见"有网段但无省市"的记录, 如 60.188.0.0/15
+  # 仅命中国家 — 此时继续后续源兑底, 百度智能IP定位可补齐省市);
+  # 各源均不完整时返回首个有结果者 (部分结果优于无结果)。
   # 返回: :invalid(IP不合法) / nil(无结果) / record
   def lookup_addr(kind, addr)
     num = ip_number(addr)
     return :invalid unless num
+    fallback = nil
     cache_order.each do |src|
-      r = src == 'cache' ? cache_lookup(kind, addr) : local_lookup(kind, addr, num)
-      return r if r
+      r = case src
+          when 'cache'  then cache_lookup(kind, addr)
+          when 'online' then online_lookup(kind, addr)
+          else local_lookup(kind, addr, num)
+          end
+      next unless r
+      return r if complete?(kind, r)
+      fallback ||= r
     end
-    nil
+    fallback
+  end
+
+  # 响应是否含该接口的有效归属字段
+  # (cache/online 兑底经由 to_geolite 生成, 天然完整; 判定主要作用于本地库)
+  def complete?(kind, r)
+    g = r['geoname'] || {}
+    case kind
+    when :asn     then !r['autonomous_system_number'].to_s.empty?
+    when :city    then !g['subdivision_1_name'].to_s.empty? ||
+                       !g['city_namezh'].to_s.empty? ||
+                       !g['city_name'].to_s.empty?
+    when :country then !g['country_name'].to_s.empty?
+    end
   end
 
   # 本地 GeoLite2 库查询 (原 addr 查询逻辑)
@@ -177,6 +227,17 @@ module GeoDB
     GeoQuery::GeoCache.to_geolite(kind, hit)
   end
 
+  # 互联网兜底: 百度智能IP定位 → ip-api.com 链式查询 (限速 + 熔断),
+  # 统一 schema 转为该接口的 GeoLite2 风格响应 (附 "online": true);
+  # 查询失败或对应字段缺失时返回 nil (该接口无数据)。
+  # asn 接口直查 ip-api.com (百度无 ASN 数据, 见 asn_online_client)
+  def online_lookup(kind, addr)
+    client = kind == :asn ? asn_online_client : online_client
+    r = client.lookup(addr)
+    return nil unless r['state'] == 'ok'
+    GeoQuery::GeoCache.to_geolite(kind, r, tag: 'online')
+  end
+
   # ---- ASN 接口 (1) -------------------------------------------------------
 
   # /geo/asn?num=XXX  查出该 AS 的所有地址段
@@ -185,7 +246,7 @@ module GeoDB
     @asn_index[num.to_s] || []
   end
 
-  # /geo/asn?addr=X.X.X.X  按 IP 查所属 AS (本地库 → GEO_CACHE 兑底)
+  # /geo/asn?addr=X.X.X.X  按 IP 查所属 AS (本地库 → GEO_CACHE → 互联网兑底)
   # 返回: :invalid(IP不合法) / nil(无结果) / record
   def asn_by_addr(addr)
     lookup_addr(:asn, addr)
@@ -202,7 +263,7 @@ module GeoDB
   end
 
   # /geo/city?addr=X.X.X.X  先查 city-IPv4/city-IPv6, 再关联 geo-city;
-  # 无结果时 GEO_CACHE 兑底
+  # 无结果时 GEO_CACHE / 互联网兑底
   # 返回: :invalid / nil / enriched_record
   def city_by_addr(addr)
     lookup_addr(:city, addr)
@@ -218,7 +279,7 @@ module GeoDB
   end
 
   # /geo/country?addr=X.X.X.X  先查 country-IPv4/country-IPv6, 再关联
-  # geo-country; 无结果时 GEO_CACHE 兑底
+  # geo-country; 无结果时 GEO_CACHE / 互联网兑底
   def country_by_addr(addr)
     lookup_addr(:country, addr)
   end
@@ -269,6 +330,9 @@ class GeoAPI < Roda
         }
       }
       info[:cache_dir] = GeoDB.geo_cache.dir if GeoDB.geo_cache
+      if GeoDB.cache_order.include?('online')
+        info[:online] = '百度智能IP定位 → ip-api.com (限速+熔断, 兑底)'
+      end
       info
     end
 

@@ -35,6 +35,7 @@ Run:  python ssh_worker.py --id <sid> --port <ssh_port> --ctrl-port 0
 
 import argparse
 import base64
+import codecs
 import json
 import os
 import socket
@@ -234,6 +235,14 @@ class Worker:
         self.clients = []              # attached control connections
         self.scrollback = []           # full output history for re-attach
         self.seq = 0
+
+        # Incremental UTF-8 decoder: channel.recv() may split a multi-byte
+        # UTF-8 sequence across chunk boundaries (e.g. a 3-byte CJK char at
+        # the 4096-byte edge). A naive .decode(..., errors="replace") turns
+        # each fragment into U+FFFD, which corrupts CJK echo output and
+        # shifts the xterm cursor. The incremental decoder carries the
+        # trailing partial bytes over to the next chunk instead.
+        self.decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
         self.stop = threading.Event()
 
@@ -548,9 +557,10 @@ class Worker:
                 self.persist()
                 break
             if self.channel.recv_ready():
-                data = self.channel.recv(4096).decode("utf-8", errors="replace")
                 idle = 0.0
-                self.push_output(data)
+                data = self.decoder.decode(self.channel.recv(4096))
+                if data:
+                    self.push_output(data)
             elif self.channel.exit_status_ready() and not self.channel.recv_ready():
                 # give late output a moment to arrive before declaring exit
                 time.sleep(0.3)

@@ -7,7 +7,8 @@
 # 按 -p 顺位编排三个数据源, 满意即停, 字段叠加:
 #   cache    GEO_CACHE 外带缓存目录 (geocacheYYYYMMDD.json, -a 指定)
 #   local    本地 geo-api 服务 (GeoLite2)
-#   internet 互联网 ip-api.com (限速 + 熔断保护)
+#   internet 互联网 百度智能IP定位→ip-api.com (百度优先, 查不出来才用
+#            ip-api; 逐接口限速 + 熔断保护)
 #
 # 结果状态可信度: unreachable < local-partial < cache-partial < empty
 #                < cache < local < online < merged
@@ -41,7 +42,8 @@
 #   -m, --merge DIR     合并 DIR 下全部 geocache*.json 为新文件后退出
 #   --refresh           忽略缓存强制重查 (会话缓存与 GEO_CACHE 均跳过)
 #   --no-local          跳过本地 geo-api
-#   --api URL           覆盖默认互联网接口 ({ip} 占位符)
+#   --api URL           覆盖互联网接口为单接口模式 ({ip} 占位符, 跳过百度链)
+#   --baidu-api URL     覆盖百度智能IP定位接口 ({ip} 占位符)
 #   --geoapi URL        覆盖本地 geo-api 地址 (默认 http://127.0.0.1:9292)
 #   --timeout SEC       互联网 HTTP 超时秒数, 默认 10
 #   --cache-stats       查看缓存统计后退出
@@ -62,8 +64,8 @@ require "json"
 require_relative "../service/geoquery/geoquery"
 
 options = { format: :text, refresh: false, no_local: false, timeout: 10,
-            api: nil, geoapi: nil, geo_cache_dir: nil, order: nil,
-            cache_out: true, merge_dir: nil }
+             api: nil, baidu_api: nil, geoapi: nil, geo_cache_dir: nil, order: nil,
+             cache_out: true, merge_dir: nil }
 
 # "-nc" 为 "-c" 的反义短参组合, OptionParser 无法注册, 手动预提取
 if (idx = ARGV.index("-nc"))
@@ -93,7 +95,8 @@ parser = OptionParser.new do |opts|
   opts.on("-m", "--merge DIR", "合并 DIR 下全部 geocache*.json 为新文件后退出") { |v| options[:merge_dir] = v }
   opts.on("--refresh", "忽略缓存强制重查")               { options[:refresh] = true }
   opts.on("--no-local", "跳过本地 geo-api")              { options[:no_local] = true }
-  opts.on("--api URL", "覆盖默认互联网接口 ({ip} 占位符)") { |v| options[:api] = v }
+  opts.on("--api URL", "覆盖互联网接口为单接口模式 ({ip} 占位符, 跳过百度链)") { |v| options[:api] = v }
+  opts.on("--baidu-api URL", "覆盖百度智能IP定位接口 ({ip} 占位符)") { |v| options[:baidu_api] = v }
   opts.on("--geoapi URL", "覆盖本地 geo-api 地址")        { |v| options[:geoapi] = v }
   opts.on("--timeout SEC", Integer, "互联网 HTTP 超时秒数 (默认 10)") { |v| options[:timeout] = v }
   opts.on("--cache-stats", "查看缓存统计") do
@@ -171,7 +174,8 @@ if ips.empty?
   exit 1
 end
 
-ngeo = GeoQuery::NGeo.new(api: options[:api], geoapi_base: options[:geoapi],
+ngeo = GeoQuery::NGeo.new(api: options[:api], baidu_api: options[:baidu_api],
+                          geoapi_base: options[:geoapi],
                           timeout: options[:timeout],
                           geo_cache_dir: options[:geo_cache_dir], order: order)
 
@@ -200,7 +204,8 @@ STATE_LABEL = {
 }.freeze
 
 SRC_DISPLAY = {
-  "cache" => "GEO_CACHE 缓存", "local" => "本地 geo-get", "online" => "互联网 gen-get",
+  "cache" => "GEO_CACHE 缓存", "local" => "本地 geo-get",
+  "online" => "互联网 gen-get (百度→ip-api)",
 }.freeze
 
 ORDER_TEXT = order.join(",").freeze

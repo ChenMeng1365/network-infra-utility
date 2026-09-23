@@ -191,6 +191,17 @@ RSpec.describe GeoQuery do
         expect(described_class.to_geolite(:city, entry("province" => "", "city" => ""))).to be_nil
         expect(described_class.to_geolite(:country, entry("country" => ""))).to be_nil
       end
+
+      it "tag 参数: 互联网兜底标记 online (默认 cached)" do
+        hit = entry
+        online = described_class.to_geolite(:city, hit, tag: "online")
+        expect(online["online"]).to be true
+        expect(online).to_not have_key("cached")
+        expect(online["geoname"]["city_namezh"]).to eq("武汉")
+
+        cached = described_class.to_geolite(:city, hit)
+        expect(cached["cached"]).to be true
+      end
     end
 
     it "lookup: 单文件命中附加 cached, 未命中返回 nil" do
@@ -352,6 +363,196 @@ RSpec.describe GeoQuery do
 
     it "lookup: IP 不合法 → state=invalid" do
       expect(stubbed_client({}).lookup("999.1.1.1")["state"]).to eq("invalid")
+    end
+  end
+
+  # ---- 互联网客户端 (百度智能IP定位 → ip-api.com 链式) -----------------------
+  describe GeoQuery::OnlineClient do
+    def baidu_ok(over = {})
+      { state: :ok,
+        fields: { "country" => "中国", "province" => "浙江省", "city" => "金华市",
+                  "isp" => "电信", "asn" => "", "asn_org" => "", "network" => "",
+                  "usage" => "IDC" }.merge(over),
+        scene: "IDC" }
+    end
+
+    # 百度仅定位到国家/运营商 (典型国外 IP, 无省市)
+    def baidu_partial(over = {}, scene: "IDC")
+      { state: :partial,
+        fields: { "country" => "美国", "province" => "", "city" => "",
+                  "isp" => "谷歌公司", "asn" => "", "asn_org" => "", "network" => "",
+                  "usage" => scene }.merge(over),
+        scene: scene }
+    end
+
+    BAIDU_EMPTY = { state: :empty, message: "百度确认无归属 (私有地址)" }.freeze
+    BAIDU_DOWN  = { state: :unreachable, message: "Errno::ECONNREFUSED" }.freeze
+
+    def ipapi_ok(over = {})
+      { state: :ok,
+        fields: { "country" => "美国", "province" => "", "city" => "",
+                  "isp" => "谷歌云", "asn" => "15169", "asn_org" => "Google LLC",
+                  "network" => "", "usage" => "云" }.merge(over) }
+    end
+
+    IPAPI_EMPTY = { state: :empty, message: "private range" }.freeze
+    IPAPI_DOWN  = { state: :unreachable, message: "timeout" }.freeze
+
+    let(:client) { described_class.new(timeout: 1) }
+
+    def stub_fetch(target, name, result)
+      blk = result.respond_to?(:call) ? result : ->(_ip) { result }
+      target.define_singleton_method(name) { |ip| blk.call(ip) }
+    end
+
+    it "百度省市定位成功 → 直接返回, 不再请求 ip-api.com" do
+      ipapi_calls = []
+      stub_fetch(client, :fetch_baidu, baidu_ok)
+      stub_fetch(client, :fetch_ipapi, ->(ip) { ipapi_calls << ip; IPAPI_EMPTY })
+      r = client.lookup("60.188.84.0")
+      expect(r["state"]).to eq("ok")
+      expect(r["province"]).to eq("浙江省")
+      expect(r["city"]).to eq("金华市")
+      expect(r["usage"]).to eq("IDC")
+      expect(r["source"]).to eq("gen-get(baidu)")
+      expect(ipapi_calls).to be_empty
+    end
+
+    it "百度仅国家/运营商 (国外 IP) + ip-api ok → 字段级叠加, 百度优先" do
+      stub_fetch(client, :fetch_baidu, baidu_partial)
+      stub_fetch(client, :fetch_ipapi,
+                 ipapi_ok("province" => "California", "city" => "Los Angeles"))
+      r = client.lookup("8.8.8.8")
+      expect(r["state"]).to eq("ok")
+      expect(r["country"]).to eq("美国")            # 百度优先
+      expect(r["province"]).to eq("California")     # ip-api 补
+      expect(r["asn"]).to eq("15169")               # ip-api 补
+      expect(r["source"]).to eq("gen-get(baidu+ip-api.com)")
+    end
+
+    it "叠加后用途未知时用百度 scene 兜底" do
+      stub_fetch(client, :fetch_baidu,
+                 baidu_partial({ "country" => "X国", "isp" => "Some Org" },
+                               scene: "企业专线"))
+      stub_fetch(client, :fetch_ipapi,
+                 ipapi_ok("country" => "X国", "isp" => "Unknown Org",
+                          "asn_org" => "Unknown Org", "usage" => "未知"))
+      r = client.lookup("8.8.8.8")
+      expect(r["usage"]).to eq("企业专线")
+    end
+
+    it "百度确认无归属 + ip-api ok → ip-api.com 兜底" do
+      stub_fetch(client, :fetch_baidu, BAIDU_EMPTY)
+      stub_fetch(client, :fetch_ipapi, ipapi_ok)
+      r = client.lookup("1.2.3.4")
+      expect(r["state"]).to eq("ok")
+      expect(r["source"]).to eq("gen-get(ip-api.com)")
+      expect(r["asn"]).to eq("15169")
+    end
+
+    it "百度与 ip-api 均确认无归属 → empty" do
+      stub_fetch(client, :fetch_baidu, BAIDU_EMPTY)
+      stub_fetch(client, :fetch_ipapi, IPAPI_EMPTY)
+      r = client.lookup("10.20.30.40")
+      expect(r["state"]).to eq("empty")
+      expect(r["message"]).to include("private range")
+    end
+
+    it "百度不可达 + ip-api ok → ip-api.com 返回并附降级说明" do
+      stub_fetch(client, :fetch_baidu, BAIDU_DOWN)
+      stub_fetch(client, :fetch_ipapi, ipapi_ok)
+      r = client.lookup("1.2.3.4")
+      expect(r["state"]).to eq("ok")
+      expect(r["source"]).to eq("gen-get(ip-api.com)")
+      expect(r["message"]).to include("百度接口不可达")
+    end
+
+    it "百度部分结果 + ip-api 不可达 → 保留百度部分结果 (ok)" do
+      stub_fetch(client, :fetch_baidu, baidu_partial)
+      stub_fetch(client, :fetch_ipapi, IPAPI_DOWN)
+      r = client.lookup("8.8.8.8")
+      expect(r["state"]).to eq("ok")
+      expect(r["country"]).to eq("美国")
+      expect(r["source"]).to eq("gen-get(baidu)")
+      expect(r["message"]).to include("ip-api.com 不可达")
+    end
+
+    it "百度确认无归属 + ip-api 不可达 → empty (百度结论优先, 可落缓存)" do
+      stub_fetch(client, :fetch_baidu, BAIDU_EMPTY)
+      stub_fetch(client, :fetch_ipapi, IPAPI_DOWN)
+      r = client.lookup("10.20.30.40")
+      expect(r["state"]).to eq("empty")
+      expect(r["message"]).to include("百度确认无归属")
+      expect(r["message"]).to include("ip-api.com 不可达")
+    end
+
+    it "百度与 ip-api 均不可达 → unreachable, message 汇总两家" do
+      stub_fetch(client, :fetch_baidu, BAIDU_DOWN)
+      stub_fetch(client, :fetch_ipapi, IPAPI_DOWN)
+      r = client.lookup("1.2.3.4")
+      expect(r["state"]).to eq("unreachable")
+      expect(r["message"]).to include("百度接口不可达")
+      expect(r["message"]).to include("ip-api.com 不可达")
+    end
+
+    it "--api 显式覆盖 → 单接口模式, 不请求百度" do
+      single = described_class.new(api: "http://192.0.2.1/x/{ip}", timeout: 1)
+      baidu_calls = []
+      stub_fetch(single, :fetch_baidu, ->(ip) { baidu_calls << ip; baidu_ok })
+      stub_fetch(single, :fetch_ipapi, IPAPI_DOWN)
+      r = single.lookup("1.2.3.4")
+      expect(r["state"]).to eq("unreachable")
+      expect(baidu_calls).to be_empty
+    end
+
+    it "IP 不合法 → invalid, 不发包" do
+      calls = []
+      stub_fetch(client, :fetch_baidu, ->(ip) { calls << ip; baidu_ok })
+      stub_fetch(client, :fetch_ipapi, ->(ip) { calls << ip; ipapi_ok })
+      expect(client.lookup("999.1.1.1")["state"]).to eq("invalid")
+      expect(calls).to be_empty
+    end
+
+    it "百度连续 3 次不可达 → 熔断, 第 4 次不再发百度请求" do
+      baidu_calls = []
+      stub_fetch(client, :fetch_baidu, ->(ip) { baidu_calls << ip; BAIDU_DOWN })
+      stub_fetch(client, :fetch_ipapi, IPAPI_DOWN)
+      4.times { client.lookup("1.2.3.4") }
+      expect(baidu_calls.size).to eq(3)
+
+      r = client.lookup("1.2.3.4")
+      expect(r["state"]).to eq("unreachable")
+      expect(baidu_calls.size).to eq(3)   # 熔断期未再发包
+    end
+  end
+
+  # ---- 互联网 Provider (限速 + 熔断) ----------------------------------------
+  describe GeoQuery::OnlineClient::Provider do
+    it "限速: 相邻请求放行间隔不小于设定值" do
+      provider = described_class.new("test", 0.2, threshold: 99, cooldown: 60)
+      t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      provider.call { { state: :ok } }
+      provider.call { { state: :ok } }
+      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0
+      expect(elapsed).to be >= 0.19   # 留少量调度余量
+    end
+
+    it "熔断: 连续 N 次不可达后直接返回, 不再执行块" do
+      provider = described_class.new("test", 0.0, threshold: 2, cooldown: 60)
+      calls = 0
+      2.times { provider.call { calls += 1; { state: :unreachable } } }
+      r = provider.call { calls += 1; { state: :ok } }
+      expect(r[:state]).to eq(:unreachable)
+      expect(r[:message]).to include("熔断")
+      expect(calls).to eq(2)
+    end
+
+    it "成功请求重置熔断计数" do
+      provider = described_class.new("test", 0.0, threshold: 2, cooldown: 60)
+      provider.call { { state: :unreachable } }
+      provider.call { { state: :ok } }
+      r = provider.call { { state: :ok } }   # 未达连续 2 次, 不熔断
+      expect(r[:state]).to eq(:ok)
     end
   end
 

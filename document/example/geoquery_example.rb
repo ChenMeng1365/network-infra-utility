@@ -17,7 +17,7 @@
 #
 # Part B  GeoQuery 查询编排 (service/geoquery/, 连接 Part A 起的服务)
 #   (八)   LocalClient  → geo-get 底座: fetch_raw 原始接口 + lookup 归一化
-#   (九)   gen-get      → 互联网查询 (ip-api.com 免费, 限 45 req/min)
+#   (九)   gen-get      → 互联网查询 (百度智能IP定位 → ip-api.com 链式)
 #   (十)   ngeo-get     → 综合查询: 本地优先, 不满意补互联网, 字段叠加
 #   (十一) 状态机       → unreachable < local-partial < online 分支
 #
@@ -294,12 +294,13 @@ def case_local_client(base)
 end
 
 # ---- (九) gen-get: 互联网查询 ----
-# GeoQuery::OnlineClient: ip-api.com 免费接口, 内置 45 req/min 限速。
+# GeoQuery::OnlineClient: 百度智能IP定位 → ip-api.com 双接口链式
+# (百度优先, 查不出来才用 ip-api; 每接口独立限速+熔断, 多线程不阻塞)。
 # 外网不通时展示 unreachable 状态并继续, 不判失败。
 def case_gen_get
-  banner '(九) gen-get — 互联网查询 (ip-api.com 免费, 限 45 req/min)'
+  banner '(九) gen-get — 互联网查询 (百度智能IP定位 → ip-api.com 链式)'
   online = GeoQuery::OnlineClient.new(timeout: 8)
-  %w[8.8.8.8 114.114.114.114 10.20.30.40].each do |ip|
+  %w[60.188.84.0 8.8.8.8 114.114.114.114 10.20.30.40].each do |ip|
     r = online.lookup(ip)
     if r['state'] == 'unreachable'
       puts "#{ip}: 互联网查询不可达 (#{r['message']}), 继续后续用例"

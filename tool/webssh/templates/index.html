@@ -978,19 +978,107 @@
   // impossible to aim at.
   var UPLOAD_RATE_STEPS = [0, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1024, 2048, 5120, 10240, 20480, 51200];
 
+  // ---- Idle keepalive ----
+  // If the user sends nothing for IDLE_KEEPALIVE_MS, transmit a single
+  // space to the remote side and a backspace KEEPALIVE_BACKSPACE_MS
+  // later (erases the space, resets device idle-timeout timers without
+  // changing the command line).
+  var IDLE_KEEPALIVE_MS = 60000;
+  var KEEPALIVE_BACKSPACE_MS = 3000;
+
+  // Record user activity on a tab (any keyboard input or explicit send).
+  // Only meaningful for terminal tabs with a live WebSocket.
+  function touchInput(tab) {
+    if (!tab || tab.type !== 'terminal') return;
+    tab.lastInputAt = Date.now();
+    tab.keepaliveArmed = true;
+  }
+
+  function sendKeepaliveSpace(tab) {
+    if (tab.ws && tab.ws.readyState === WebSocket.OPEN) {
+      tab.keepaliveArmed = false;
+      try { tab.ws.send(JSON.stringify({ type: 'input', data: ' ' })); } catch (e) { return; }
+      setTimeout(function () {
+        if (tab.ws && tab.ws.readyState === WebSocket.OPEN) {
+          try { tab.ws.send(JSON.stringify({ type: 'input', data: '\u007f' })); } catch (e) {}
+        }
+        // restart the idle window after the keepalive completes
+        tab.lastInputAt = Date.now();
+        tab.keepaliveArmed = true;
+      }, KEEPALIVE_BACKSPACE_MS);
+    }
+  }
+
+  function keepaliveTick() {
+    var now = Date.now();
+    tabs.forEach(function (tab) {
+      if (tab.type !== 'terminal' || !tab.ws || tab.ws.readyState !== WebSocket.OPEN) return;
+      if (!tab.keepaliveArmed || !tab.lastInputAt) return;
+      if (now - tab.lastInputAt >= IDLE_KEEPALIVE_MS) {
+        sendKeepaliveSpace(tab);
+      }
+    });
+  }
+
   // ---- Terminal init ----
+
+  // East Asian Ambiguous code point ranges (EAW=A; generated from
+  // Python unicodedata 15.1.0). In a CJK terminal these characters
+  // (·—…""''℃①§± etc.) are conventionally rendered 2 cells wide,
+  // same as full-width CJK. xterm's default Unicode V6 provider treats
+  // them as 1 cell, so the cursor lands mid-character and glyphs
+  // overlap: registering a provider that widens them fixes alignment.
+  var AMBIGUOUS_RANGES = [[161,161],[164,164],[167,168],[170,170],[173,174],[176,180],[182,186],[188,191],[198,198],[208,208],[215,216],[222,225],[230,230],[232,234],[236,237],[240,240],[242,243],[247,250],[252,252],[254,254],[257,257],[273,273],[275,275],[283,283],[294,295],[299,299],[305,307],[312,312],[319,322],[324,324],[328,331],[333,333],[338,339],[358,359],[363,363],[462,462],[464,464],[466,466],[468,468],[470,470],[472,472],[474,474],[476,476],[593,593],[609,609],[708,708],[711,711],[713,715],[717,717],[720,720],[728,731],[733,733],[735,735],[768,879],[913,929],[931,937],[945,961],[963,969],[1025,1025],[1040,1103],[1105,1105],[8208,8208],[8211,8214],[8216,8217],[8220,8221],[8224,8226],[8228,8231],[8240,8240],[8242,8243],[8245,8245],[8251,8251],[8254,8254],[8308,8308],[8319,8319],[8321,8324],[8364,8364],[8451,8451],[8453,8453],[8457,8457],[8467,8467],[8470,8470],[8481,8482],[8486,8486],[8491,8491],[8531,8532],[8539,8542],[8544,8555],[8560,8569],[8585,8585],[8592,8601],[8632,8633],[8658,8658],[8660,8660],[8679,8679],[8704,8704],[8706,8707],[8711,8712],[8715,8715],[8719,8719],[8721,8721],[8725,8725],[8730,8730],[8733,8736],[8739,8739],[8741,8741],[8743,8748],[8750,8750],[8756,8759],[8764,8765],[8776,8776],[8780,8780],[8786,8786],[8800,8801],[8804,8807],[8810,8811],[8814,8815],[8834,8835],[8838,8839],[8853,8853],[8857,8857],[8869,8869],[8895,8895],[8978,8978],[9312,9449],[9451,9547],[9552,9587],[9600,9615],[9618,9621],[9632,9633],[9635,9641],[9650,9651],[9654,9655],[9660,9661],[9664,9665],[9670,9672],[9675,9675],[9678,9681],[9698,9701],[9711,9711],[9733,9734],[9737,9737],[9742,9743],[9756,9756],[9758,9758],[9792,9792],[9794,9794],[9824,9825],[9827,9829],[9831,9834],[9836,9837],[9839,9839],[9886,9887],[9919,9919],[9926,9933],[9935,9939],[9941,9953],[9955,9955],[9960,9961],[9963,9969],[9972,9972],[9974,9977],[9979,9980],[9982,9983],[10045,10045],[10102,10111],[11094,11097],[12872,12879],[57344,63743],[65024,65039],[65533,65533],[127232,127242],[127248,127277],[127280,127337],[127344,127373],[127375,127376],[127387,127404],[917760,917999],[983040,1048573],[1048576,1114109]];
+
+  function inAmbiguousRange(cp) {
+    var lo = 0, hi = AMBIGUOUS_RANGES.length - 1;
+    while (lo <= hi) {
+      var mid = (lo + hi) >> 1;
+      var r = AMBIGUOUS_RANGES[mid];
+      if (cp < r[0]) hi = mid - 1;
+      else if (cp > r[1]) lo = mid + 1;
+      else return true;
+    }
+    return false;
+  }
+
+  // Register a CJK-aware width provider on a terminal: identical to the
+  // default Unicode V6 provider, except East Asian Ambiguous characters
+  // count as 2 columns (CJK terminal convention, same as PuTTY/SecureCRT
+  // "treat ambiguous as wide"). Keeps the cursor strictly aligned after
+  // full-width characters. Relies on the vendored xterm 5.3.0 build
+  // (term.unicode is a proposed API => allowProposedApi must be true).
+  function registerCjkUnicodeProvider(term) {
+    try {
+      var svc = term.unicode;
+      var coreSvc = term._core.unicodeService;   // fixed vendored 5.3.0 build
+      var baseWc = coreSvc._providers["6"].wcwidth;  // DEFAULT provider (not the service, avoid recursion)
+      svc.register({
+        version: "cjk",
+        wcwidth: function (cp) {
+          var w = baseWc(cp);
+          if (w === 1 && cp > 0x7F && inAmbiguousRange(cp)) return 2;
+          return w;
+        }
+      });
+      svc.activeVersion = "cjk";
+    } catch (e) { /* fall back to default widths on unexpected builds */ }
+  }
+
   function newTerminal(scrollback) {
     var term = new Terminal({
       fontSize: 14,
       fontFamily: 'Consolas, "Courier New", monospace',
       cursorBlink: true,
       scrollback: scrollback > 0 ? scrollback : 10000,
+      allowProposedApi: true,   // required for term.unicode (width provider)
       theme: {
         background: "#000000",
         foreground: "#e6edf3",
         cursor: "#ffffff"
       }
     });
+    registerCjkUnicodeProvider(term);
     return term;
   }
 
@@ -1028,7 +1116,9 @@
       sid: null,
       log: [],
       status: 'disconnected',
-      pageDiv: pageDiv
+      pageDiv: pageDiv,
+      lastInputAt: 0,
+      keepaliveArmed: false
     };
     tabs.push(tab);
 
@@ -1038,6 +1128,7 @@
     // Terminal input -> ws
     term.onData(function (data) {
       if (tab.ws && tab.ws.readyState === WebSocket.OPEN) {
+        touchInput(tab);
         tab.ws.send(JSON.stringify({ type: "input", data: data }));
       }
     });
@@ -1278,6 +1369,8 @@
       tab.status = 'connected';
       updateTabStatus(tab);
       if (tab.term) tab.term.focus();
+      // start the idle-keepalive window from the moment the socket opens
+      touchInput(tab);
       tab.ws.send(JSON.stringify({ type: "resize", cols: tab.term.cols, rows: tab.term.rows }));
     };
 
@@ -1728,6 +1821,7 @@
     var lineDelay = (toolbarConfig.line_delay || 0) * 1000;
     function sendLine(i) {
       if (i >= lines.length) return;
+      touchInput(tab);
       tab.ws.send(JSON.stringify({ type: "input", data: lines[i] + "\r" }));
       if (i + 1 < lines.length && lineDelay > 0) {
         setTimeout(function () { sendLine(i + 1); }, lineDelay);
@@ -1769,6 +1863,7 @@
       if (i >= lines.length) return;
       var line = lines[i];
       // Send the line + Enter
+      touchInput(tab);
       tab.ws.send(JSON.stringify({ type: "input", data: line + "\r" }));
       if (i + 1 < lines.length && lineDelay > 0) {
         setTimeout(function () { sendLine(i + 1); }, lineDelay);
@@ -1887,6 +1982,7 @@
     function sendLine(i) {
       if (i >= lines.length) return;
       if (tab.ws && tab.ws.readyState === WebSocket.OPEN) {
+        touchInput(tab);
         tab.ws.send(JSON.stringify({ type: 'input', data: lines[i] + '\r' }));
       }
       if (i + 1 < lines.length && cmdIntervalMs > 0) {
@@ -1945,6 +2041,7 @@
               if (tab.ws && tab.ws.readyState === WebSocket.OPEN && bsCount > 0) {
                 var bs = '';
                 for (var i = 0; i < bsCount; i++) bs += '\b';
+                touchInput(tab);
                 tab.ws.send(JSON.stringify({ type: 'input', data: bs }));
               }
               showToast('已剪切');
@@ -1960,6 +2057,7 @@
         // Paste from clipboard
         navigator.clipboard.readText().then(function (clipText) {
           if (clipText && tab.ws && tab.ws.readyState === WebSocket.OPEN) {
+            touchInput(tab);
             tab.ws.send(JSON.stringify({ type: 'input', data: clipText }));
             showToast('已粘贴');
           } else {
@@ -2667,6 +2765,8 @@
       if (activeTab && activeTab.dataset.tab === 'command') refreshCmdSessionSelect();
       if (activeTab && activeTab.dataset.tab === 'files') refreshFileSessionSelect();
     }, 3000);
+    // Idle keepalive check (1s resolution is plenty)
+    setInterval(keepaliveTick, 1000);
   });
 })();
 </script>

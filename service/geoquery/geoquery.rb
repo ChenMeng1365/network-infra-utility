@@ -1,7 +1,7 @@
 # coding: utf-8
 # frozen_string_literal: true
 
-# GeoQuery — IP 归属综合查询服务 (GEO_CACHE 缓存 + 本地 geo-api + 互联网 ip-api.com)
+# GeoQuery — IP 归属综合查询服务 (GEO_CACHE 缓存 + 本地 geo-api + 互联网 百度智能IP定位→ip-api.com)
 #
 # 命令行入口: bin/gen-get (纯互联网) / bin/ngeo-get (缓存+本地+互联网综合)
 # 详见同目录 GeoQuery.md。
@@ -12,7 +12,7 @@
 #   2. 按 -p 顺位逐源查询 (默认 cache → local → internet):
 #      - cache    GEO_CACHE 外带缓存目录 (geocacheXXXXXXXX.json, bin/ngeo-get -a)
 #      - local    本地 geo-api 服务 (GeoLite2)
-#      - internet 互联网 ip-api.com (限速 + 熔断保护)
+#      - internet 互联网 百度智能IP定位→ip-api.com 链式 (限速 + 熔断保护)
 #   3. 每源结果按顺位折叠: 先查的源字段优先, 后查的补空缺
 #   4. 折叠后归属满意 (省/市/ASN 齐全) → 提前终止, 不再查后续源
 #   5. 全部源查完仍不满意 → 组装终态 (叠加/部分/空/不可达)
@@ -58,17 +58,17 @@ class GeoQuery::NGeo
   SRC_LABEL = {
     "cache" => "geo-cache",   # GEO_CACHE 外带缓存
     "local" => "geo-get",     # 本地 geo-api
-    "online" => "gen-get",    # 互联网 ip-api.com
+    "online" => "gen-get",    # 互联网 百度智能IP定位→ip-api.com
   }.freeze
 
   attr_reader :local, :online, :cache, :geo_cache, :order
 
-  def initialize(geoapi_base: nil, api: nil, timeout: 10,
+  def initialize(geoapi_base: nil, api: nil, baidu_api: nil, timeout: 10,
                  cache_dir: nil, cache_file: nil,
                  geo_cache_dir: nil, order: DEFAULT_ORDER)
     base = geoapi_base || ENV["GEO_API_BASE"] || GeoQuery::LocalClient::DEFAULT_BASE
     @local  = GeoQuery::LocalClient.new(base: base)
-    @online = GeoQuery::OnlineClient.new(api: api, timeout: timeout)
+    @online = GeoQuery::OnlineClient.new(api: api, baidu_api: baidu_api, timeout: timeout)
     dir = cache_dir || GeoQuery::Cache.default_dir
     @cache = GeoQuery::Cache.new(cache_file || File.join(dir, "ngeo-cache.json"))
     @geo_cache = geo_cache_dir ? GeoQuery::GeoCache.new(geo_cache_dir) : nil
@@ -210,6 +210,14 @@ class GeoQuery::NGeo
         "merged"
       end
 
+    # 运营商: 合并后 asn_org 有值时以其归一化 (网段级数据可信);
+    # asn_org 为空 (如纯互联网结果, 百度不提供 ASN) 时沿用已归一化的 isp
+    isp = if fields["asn_org"].to_s.empty?
+            fields["isp"].to_s
+          else
+            GeoQuery::Normalize.isp_from_asn(fields["asn_org"].to_s)
+          end
+
     {
       "ip" => ip,
       "state" => state,
@@ -217,7 +225,7 @@ class GeoQuery::NGeo
       "country" => fields["country"].to_s,
       "province" => fields["province"].to_s,
       "city" => fields["city"].to_s,
-      "isp" => GeoQuery::Normalize.isp_from_asn(fields["asn_org"].to_s),
+      "isp" => isp,
       "asn" => fields["asn"].to_s,
       "asn_org" => fields["asn_org"].to_s,
       "network" => fields["network"].to_s,
@@ -296,27 +304,41 @@ class GeoQuery::NGeo
   end
 
   # 互联网熔断: 连续 3 次不可达后 60 秒内直接返回 unreachable, 不再发包
+  # (OnlineClient 内部另有逐接口限速/熔断; 此处为 internet 源整体二道防线。
+  #  锁只覆盖状态读写, HTTP 请求在锁外执行, 不阻塞其他线程的查询)
   def online_with_breaker
+    return breaker_result if breaker_open?
+    result = yield
+    record_online!(result)
+    result
+  end
+
+  def breaker_open?
     @breaker_mutex.synchronize do
-      now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      if @breaker_until && now < @breaker_until
-        return {
-          "state" => "unreachable",
-          "message" => "熔断中 (前 #{@failures_total} 次不可达, 暂停在线查询)",
-        }
-      end
-      result = yield
+      @breaker_until &&
+        Process.clock_gettime(Process::CLOCK_MONOTONIC) < @breaker_until
+    end
+  end
+
+  def breaker_result
+    {
+      "state" => "unreachable",
+      "message" => "熔断中 (前 #{@failures_total} 次不可达, 暂停在线查询)",
+    }
+  end
+
+  def record_online!(result)
+    @breaker_mutex.synchronize do
       if result["state"] == "unreachable"
         @failures += 1
         if @failures >= BREAKER_THRESHOLD
           @failures_total = BREAKER_THRESHOLD
-          @breaker_until = now + BREAKER_COOLDOWN
+          @breaker_until = Process.clock_gettime(Process::CLOCK_MONOTONIC) + BREAKER_COOLDOWN
           @failures = 0
         end
       else
         @failures = 0
       end
-      result
     end
   end
 

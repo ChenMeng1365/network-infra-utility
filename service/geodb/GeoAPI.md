@@ -1,14 +1,3 @@
----
-AIGC:
-  ContentProducer: '001191110102MAD55U9H0F10002'
-  ContentPropagator: '001191110102MAD55U9H0F10002'
-  Label: '1'
-  ProduceID: 'f8a5515f-8063-4c0f-82de-6f5d3921a8d0'
-  PropagateID: 'f8a5515f-8063-4c0f-82de-6f5d3921a8d0'
-  ReservedCode1: 'e9dc29f2-2c00-4f09-a5c5-2d487e36268f'
-  ReservedCode2: 'e9dc29f2-2c00-4f09-a5c5-2d487e36268f'
----
-
 # GeoAPI 测试用例
 
 > 接口服务文件：`api.rb`  
@@ -229,24 +218,41 @@ IP 合法性说明：含 `:` 按 IPv6 解析，否则按 IPv4 解析；非法地
 
 ---
 
-## (7) GEO_CACHE 外带缓存兜底 — `geo-api -a`
+## (7) 兑底机制：GEO_CACHE 缓存与互联网 — `geo-api -a` / `--priority`
 
-服务端以 `geo-api -d GEODB_PATH -a GEO_CACHE [--priority local,cache]` 启动后，
-`addr` 类查询按顺位编排：先查本地 GeoLite2 库，本地查不到（404）时用 GEO_CACHE
-目录内 `geocacheYYYYMMDD.json`（`ngeo-get -c` 产出）的缓存定位信息兜底，统一
-schema 转换为各接口的 GeoLite2 风格响应，并附加 `"cached": true` 标记。
-`id` / `num` 类查询不适用缓存（非 IP 键）。目录内文件增删改自动感知，无需重启。
+服务端以 `geo-api -d GEODB_PATH -a GEO_CACHE [--priority local,cache,online]` 启动后，
+`addr` 类查询按顺位编排：先查本地 GeoLite2 库，再用 GEO_CACHE 目录内
+`geocacheYYYYMMDD.json`（`ngeo-get -c` 产出）的缓存定位信息兑底，最后由互联网
+（百度智能IP定位 → ip-api.com 链式）兜底。后两者统一 schema 转换为各接口的
+GeoLite2 风格响应，分别附加 `"cached": true` / `"online": true` 标记。
+
+**字段完整即停**：本地库常见"有网段但无省市"的记录（如 60.188.0.0/15 仅命中
+国家），此时不视为命中，继续后续源兑底（百度智能IP定位可补齐省市）；各源均
+不完整时返回首个有结果者（部分结果优于无结果）。`id` / `num` 类查询不适用
+兑底（非 IP 键）。目录内文件增删改自动感知，无需重启。
+
+互联网兑底说明：
+
+- 链式：百度智能IP定位（qifu.baidu.com，国内省市/运营商/场景准）→ ip-api.com
+  （百度查不出来才用，补 ASN 与国外城市）；
+- 限速与熔断：每接口独立（百度 1 QPS / ip-api.com 45 req/min；连续 3 次不可达
+  暂停 60s），多线程安全不阻塞（HTTP 在限速锁外执行）；
+- asn 接口兑底直查 ip-api.com（百度无 ASN 数据）；
+- 超时默认 8s（`--online-timeout` / `GEODB_ONLINE_TIMEOUT` 覆盖），服务端响应
+  不宜久等；
+- 离线环境用 `--priority local,cache` 关闭互联网兑底。
 
 ### 7.1 启动与根路由
 
 | # | 命令 | 预期结果 |
 |---|------|----------|
-| 7.1.1 | `geo-api -d ./geodb -a ./GEO_CACHE` | 启动横幅显示缓存目录与文件数、兑底顺位 `local,cache` |
-| 7.1.2 | `curl -s "localhost:9292/"` | 200，含 `cache_dir` 与 `cache_order:"local,cache"` |
+| 7.1.1 | `geo-api -d ./geodb -a ./GEO_CACHE` | 启动横幅显示缓存目录与文件数、查询顺位 `local,cache,online` 与互联网兑底信息 |
+| 7.1.2 | `curl -s "localhost:9292/"` | 200，含 `cache_dir`、`cache_order:"local,cache,online"` 与 `online` 链路说明 |
 | 7.1.3 | `geo-api -a ./不存在的目录` | 警告但继续启动（目录后续创建自动感知） |
-| 7.1.4 | `geo-api --priority cache,local` | 兑底顺位改为缓存优先 |
+| 7.1.4 | `geo-api --priority cache,local` | 兑底顺位改为缓存优先，无互联网兑底 |
+| 7.1.5 | `geo-api --priority local,cache,online --online-timeout 5` | 互联网兑底超时改为 5s |
 
-### 7.2 缓存兜底查询
+### 7.2 兑底查询
 
 预置 `GEO_CACHE/geocache20260101.json`：
 
@@ -258,20 +264,34 @@ schema 转换为各接口的 GeoLite2 风格响应，并附加 `"cached": true` 
 
 | # | curl 命令 | 预期结果 |
 |---|-----------|----------|
-| 7.2.1 | `curl -s "localhost:9292/geo/city?addr=203.0.113.7"` | 200，`geoname.subdivision_1_name:"浙江"`、`geoname.city_namezh:"杭州"`、`cached:true`（本地库无此 TEST-NET-3 地址，走缓存兜底）|
+| 7.2.1 | `curl -s "localhost:9292/geo/city?addr=203.0.113.7"` | 200，`geoname.subdivision_1_name:"浙江"`、`geoname.city_namezh:"杭州"`、`cached:true`（本地库无此 TEST-NET-3 地址，走缓存兑底）|
 | 7.2.2 | `curl -s "localhost:9292/geo/asn?addr=203.0.113.7"` | 200，`autonomous_system_number:"4134"`、`cached:true` |
 | 7.2.3 | `curl -s "localhost:9292/geo/country?addr=203.0.113.7"` | 200，`geoname.country_name:"中国"`、`cached:true` |
 | 7.2.4 | `curl -s "localhost:9292/geo/asn?addr=8.8.8.8"` | 200，Google LLC，**无** `cached` 字段（本地库命中，不走缓存，local 优先）|
-| 7.2.5 | 缓存记录 `state:"empty"` 的 IP 查 city | 404（缓存确认无归属，无兜底数据）|
+| 7.2.5 | 缓存记录 `state:"empty"` 的 IP 查 city | 404（缓存确认无归属，无兑底数据）|
 | 7.2.6 | 缓存记录无 `asn` 字段的 IP 查 asn | 404（对应字段缺失，该接口无数据）|
+| 7.2.7 | `curl -s "localhost:9292/geo/city?addr=60.188.84.0"`（无缓存时） | 200，`geoname.subdivision_1_name:"浙江省"`、`online:true`（本地库仅命中网段无省市 → 互联网兑底，百度补齐）|
+| 7.2.8 | 无缓存目录启动时查本地库缺失的 IP | 互联网兑底（`online:true`）或 404（互联网也无归属）|
 
-### 7.3 兜底响应结构（缓存命中）
+### 7.3 兑底响应结构
+
+缓存命中（`cached:true`，与互联网兑底同构）：
 
 ```json
 {
   "network": "203.0.113.0/24",
   "geoname": { "country_name": "中国", "subdivision_1_name": "浙江", "city_namezh": "杭州" },
   "cached": true
+}
+```
+
+互联网兑底（`online:true`，network 为空——互联网源不提供网段）：
+
+```json
+{
+  "network": "",
+  "geoname": { "country_name": "中国", "subdivision_1_name": "浙江省", "city_namezh": "金华市" },
+  "online": true
 }
 ```
 
@@ -287,6 +307,7 @@ schema 转换为各接口的 GeoLite2 风格响应，并附加 `"cached": true` 
 
 4. **GEO_CACHE 与服务端缓存（`@store`）的区别**：`@store` 是数据文件加载内存缓存（进程内常驻）；GEO_CACHE 是外带定位信息缓存目录（ngeo-get 产出的查询结果），用于 addr 查询兜底，两者互不影响。
 
-5. **geo-api 的顺位参数是 `--priority`**（不是 `-p`）：`-p` 已被监听端口占用。服务端仅支持 `local,cache` 排列（无互联网源）；客户端 `ngeo-get -p` 支持 `cache,local,internet` 三源排列。
+5. **geo-api 的顺位参数是 `--priority`**（不是 `-p`）：`-p` 已被监听端口占用。服务端支持 `local,cache,online` 排列（默认 `local,cache,online`，含互联网兑底）；客户端 `ngeo-get -p` 支持 `cache,local,internet` 三源排列。
+6. **互联网兑底的请求开销**：兑底仅在本地库与 GEO_CACHE 均无完整结果时触发；百度接口限速 1 QPS，并发未命中查询按序排队（实测 4 线程并发约 3~4s 全部返回，互不阻塞）。服务端不产出 GEO_CACHE（产出由客户端 ngeo-get 负责，产出后可经 `-a` 供服务端兑底复用）。
 
 > AI生成
