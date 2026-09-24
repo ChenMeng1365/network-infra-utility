@@ -34,6 +34,7 @@ module NetworkInfraUtility
 
   # 工具层：依赖 support
   require_relative "tool/probe/lib/probe"
+  require_relative "tool/netstream/lib/netstream"
 
   # 服务层：依赖 tool / support
   require_relative "service/simlab/lib/simlab"

@@ -84,5 +84,3 @@ NetworkInfraUtility::Probe::Registry.register(MyProbe)
 - **RADIUS** 无共享密钥时，服务器可能静默丢弃请求，「无响应」≠「服务不可达」。
 - **SNMP** 需正确团体名/版本，否则即便服务可达也可能超时。
 - **TWAMP** 仅验证控制端口（862）可达，完整会话需控制协议协商。
-
-> AI生成

@@ -136,5 +136,3 @@ SimLab 是 network-infra-utility 的路由交换仿真子系统，
     telemetry.rb                ← 额外观测
     scenario_schema.rb          ← YAML DSL 扩展
 =end
-
-> AI生成

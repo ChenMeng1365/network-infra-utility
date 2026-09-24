@@ -309,5 +309,3 @@ GeoLite2 风格响应，分别附加 `"cached": true` / `"online": true` 标记�
 
 5. **geo-api 的顺位参数是 `--priority`**（不是 `-p`）：`-p` 已被监听端口占用。服务端支持 `local,cache,online` 排列（默认 `local,cache,online`，含互联网兑底）；客户端 `ngeo-get -p` 支持 `cache,local,internet` 三源排列。
 6. **互联网兑底的请求开销**：兑底仅在本地库与 GEO_CACHE 均无完整结果时触发；百度接口限速 1 QPS，并发未命中查询按序排队（实测 4 线程并发约 3~4s 全部返回，互不阻塞）。服务端不产出 GEO_CACHE（产出由客户端 ngeo-get 负责，产出后可经 `-a` 供服务端兑底复用）。
-
-> AI生成

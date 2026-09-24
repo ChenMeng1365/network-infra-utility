@@ -1,0 +1,208 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+# coding: utf-8
+#
+# netstream — NetStream v5/v9 pcap 解析命令行工具 (network-infra-utility)
+#
+# 用法:
+#   netstream <pcap> [选项]
+#   netstream capture.pcap -o output/
+#   netstream capture.pcap --templates-only
+#   netstream capture.pcap --no-predefined --limit 50
+#   netstream capture.pcap --stats
+#
+# 选项:
+#   -o, --output DIR           输出目录 (默认: <pcap名>_netstream/)
+#       --no-predefined         不使用预定义逆向推断模板
+#       --no-capture-templates  不从报文解析模板 FlowSet
+#       --limit N               每模板最大输出记录数 (0=不限, 默认: 100)
+#       --templates-only        仅导出模板，跳过数据记录
+#       --stats                 输出统计信息到终端
+#   -q, --quiet                 静默模式 (不输出进度)
+#   -v, --version              显示版本
+#   -h, --help                  显示帮助
+#
+# 退出码: 0 成功, 1 解析异常, 2 参数错误
+
+require "optparse"
+require "json"
+
+begin
+  require "netstream"
+rescue LoadError
+  $LOAD_PATH.unshift(File.expand_path("../tool/netstream/lib", __dir__))
+  require "netstream"
+end
+
+require_relative "../version"
+
+module NetStreamCLI
+  module_function
+
+  def run(argv)
+    options = {
+      output: nil,
+      use_predefined: true,
+      parse_templates: true,
+      limit: 100,
+      templates_only: false,
+      stats: false,
+      quiet: false
+    }
+    parser = build_option_parser(options)
+
+    begin
+      parser.parse!(argv)
+    rescue OptionParser::ParseError => e
+      warn "错误: #{e.message}"
+      return 2
+    end
+
+    return print_help(parser) if options[:help]
+    return print_version if options[:version]
+
+    if argv.empty?
+      warn "错误: 缺少 pcap 文件路径"
+      warn "用法: netstream <pcap> [选项]  (用 -h 查看完整帮助)"
+      return 2
+    end
+
+    pcap_path = argv.shift
+
+    unless File.file?(pcap_path)
+      warn "错误: 文件不存在 — #{pcap_path}"
+      return 2
+    end
+
+    output_dir = options[:output] || default_output_dir(pcap_path)
+
+    run_parse(pcap_path, output_dir, options)
+  end
+
+  def run_parse(pcap_path, output_dir, options)
+    puts "输入: #{pcap_path}" unless options[:quiet]
+    puts "输出: #{output_dir}/" unless options[:quiet]
+
+    mode_flags = []
+    mode_flags << "预定义模板" if options[:use_predefined]
+    mode_flags << "报文模板" if options[:parse_templates]
+    puts "模板模式: #{mode_flags.join(' + ')}" unless options[:quiet]
+    puts "记录限量: #{options[:limit] > 0 ? options[:limit] : '不限'}/模板" unless options[:quiet]
+
+    result = NetworkInfraUtility::NetStream.parse(
+      pcap_path,
+      use_predefined: options[:use_predefined],
+      parse_templates: options[:parse_templates],
+      limit: options[:limit],
+      output_dir: output_dir,
+      templates_only: options[:templates_only],
+      progress: !options[:quiet]
+    )
+
+    print_report(result, options, output_dir)
+
+    0
+  rescue StandardError => e
+    warn "错误: #{e.message}"
+    warn e.backtrace.first(5).join("\n") if ENV["DEBUG"]
+    1
+  end
+
+  def print_report(result, options, output_dir)
+    puts "" unless options[:quiet]
+    puts "=== 解析完成 ===" unless options[:quiet]
+    puts "扫描总包数:   #{result.packet_count}" unless options[:quiet]
+    puts "v5 包数:       #{result.v5_count}" unless options[:quiet]
+    puts "v9 包数:       #{result.v9_count}" unless options[:quiet]
+    puts "其他包数:     #{result.other_count}" unless options[:quiet]
+    puts "流记录总数:   #{result.record_count}" unless options[:quiet]
+    puts "模板数量:     #{result.templates.size}" unless options[:quiet]
+
+    result.templates.keys.sort.each do |tid|
+      t = result.templates[tid]
+      src = t[:predefined] ? "预定义" : "报文"
+      type = t[:option] ? "选项模板" : "数据模板"
+      puts "  #{type} #{tid} (#{src}) — #{t[:desc] || 'N/A'}" unless options[:quiet]
+    end
+
+    unless result.missing_templates.empty?
+      warn "警告: 以下模板 ID 在报文中未找到定义: #{result.missing_templates.inspect}"
+    end
+
+    if options[:stats] || !options[:quiet]
+      puts "" unless options[:quiet]
+      puts "=== 流量统计 ===" if options[:stats] || !options[:quiet]
+      puts "  模板ID    流数      总包数          平均包数  最短包长  最长包长  平均包长" if options[:stats] || !options[:quiet]
+      result.stats.report_lines.each { |line| puts line }
+    end
+
+    puts "" unless options[:quiet]
+    unless options[:templates_only]
+      puts "输出文件:" unless options[:quiet]
+      puts "  #{output_dir}/templates.json — 模板定义" unless options[:quiet]
+      puts "  #{output_dir}/records/       — 流记录 JSON (每条一文件)" unless options[:quiet]
+    end
+    puts "  #{output_dir}/summary.json    — 解析摘要" unless options[:quiet]
+  end
+
+  def default_output_dir(pcap_path)
+    base = File.basename(pcap_path, ".*")
+    dir = File.dirname(pcap_path)
+    File.join(dir, "#{base}_netstream")
+  end
+
+  def build_option_parser(options)
+    OptionParser.new do |opts|
+      opts.banner = <<~BAN
+        netstream — NetStream v5/v9 pcap 解析工具
+
+        用法:
+          netstream <pcap> [选项]
+          netstream capture.pcap -o output/
+          netstream capture.pcap --templates-only
+          netstream capture.pcap --no-predefined --limit 50
+
+        选项:
+      BAN
+      opts.on("-o", "--output DIR", "输出目录 (默认: <pcap名>_netstream/)") do |v|
+        options[:output] = v
+      end
+      opts.on("--no-predefined", "不使用预定义逆向推断模板") do
+        options[:use_predefined] = false
+      end
+      opts.on("--no-capture-templates", "不从报文解析模板 FlowSet") do
+        options[:parse_templates] = false
+      end
+      opts.on("--limit N", Integer, "每模板最大输出记录数 (0=不限, 默认: 100)") do |v|
+        options[:limit] = v
+      end
+      opts.on("--templates-only", "仅导出模板，跳过数据记录") do
+        options[:templates_only] = true
+      end
+      opts.on("--stats", "输出统计信息到终端") do
+        options[:stats] = true
+      end
+      opts.on("-q", "--quiet", "静默模式 (不输出进度)") do
+        options[:quiet] = true
+      end
+      opts.on("-v", "--version", "显示版本") do
+        options[:version] = true
+      end
+      opts.on("-h", "--help", "显示帮助") do
+        options[:help] = true
+      end
+    end
+  end
+
+  def print_help(parser)
+    puts parser
+    0
+  end
+
+  def print_version
+    puts "netstream #{NetworkInfraUtility::NetStream::VERSION} (network-infra-utility #{NetworkInfraUtility::VERSION})"
+    0
+  end
+end
+
+exit NetStreamCLI.run(ARGV) if File.basename($PROGRAM_NAME) == File.basename(__FILE__)

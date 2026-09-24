@@ -150,5 +150,3 @@ Ethernet II、802.1Q VLAN、IPv4、IPv6、ARP、TCP、UDP、ICMP、ICMPv6。
 # Linux:    apt install erlang / yum install erlang
 # macOS:    brew install erlang
 ```
-
-> AI生成
