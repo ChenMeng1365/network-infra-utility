@@ -14,11 +14,12 @@ main(Args) ->
     true ->
         Cfg = load_cfg(O),
         {LT, Pkts} = read_pcap(F),
-        Fr = [{byte_size(D), parse_frame(D, LT)} || {_, D} <- Pkts],
+        Fr = [{byte_size(D), parse_frame(D, LT)} || {_, _, D} <- Pkts],
         F1 = apply_filter(Fr, Cfg),
+        {FSec, FFrac, LSec, LFrac} = pkt_ts_range(Pkts),
         case get_in(Cfg, [display, mode], detail) of
-            summary -> show_summary(F1, Cfg, LT, length(Pkts));
-            detail  -> show_detail(F1, Cfg, LT, length(Pkts))
+            summary -> show_summary(F1, Cfg, LT, length(Pkts), FSec, FFrac, LSec, LFrac);
+            detail  -> show_detail(F1, Cfg, LT, length(Pkts), FSec, FFrac, LSec, LFrac)
         end
     end.
 
@@ -49,7 +50,8 @@ load_cfg(O) ->
     Base = #{
         filter  => #{protocol => [], port => nil, ip => nil},
         stats   => #{group_by => stack, top => 0, sort => desc, sort_by => count},
-        display => #{mode => detail, fields => [], payload => true, color => false}
+        display => #{mode => detail, fields => [], payload => true, color => false,
+                     bytes => human, per_frame => true}
     },
     CF = maps:get(c, O),
     C0 = case CF of
@@ -182,23 +184,36 @@ read_pcap(File) ->
                     {LT, read_pkts_be(Rest, [])};
                 <<16#4d, 16#3c, 16#b2, 16#a1>> ->
                     <<_:16/little, _:16/little, _:32/little, _:32/little, _:32/little, LT:32/little>> = GH,
-                    {LT, read_pkts_le(Rest, [])};
+                    {LT, ns_to_us(read_pkts_le(Rest, []))};
                 <<16#a1, 16#b2, 16#3c, 16#4d>> ->
                     <<_:16/big, _:16/big, _:32/big, _:32/big, _:32/big, LT:32/big>> = GH,
-                    {LT, read_pkts_be(Rest, [])};
+                    {LT, ns_to_us(read_pkts_be(Rest, []))};
                 _ -> erlang:error(not_pcap)
             end
     end.
 
-read_pkts_le(<<Ts:32/little, _:32/little, Len:32/little, _:32/little, D:Len/binary, R/binary>>, Acc) ->
-    read_pkts_le(R, [{Ts, D} | Acc]);
+%% 纳秒 pcap 的 frac 字段统一归一化为微秒
+ns_to_us(Pkts) -> [{S, F div 1000, D} || {S, F, D} <- Pkts].
+
+read_pkts_le(<<Ts:32/little, Frac:32/little, Len:32/little, _:32/little, D:Len/binary, R/binary>>, Acc) ->
+    read_pkts_le(R, [{Ts, Frac, D} | Acc]);
 read_pkts_le(<<>>, Acc) -> lists:reverse(Acc);
 read_pkts_le(_, Acc) -> lists:reverse(Acc).
 
-read_pkts_be(<<Ts:32/big, _:32/big, Len:32/big, _:32/big, D:Len/binary, R/binary>>, Acc) ->
-    read_pkts_be(R, [{Ts, D} | Acc]);
+read_pkts_be(<<Ts:32/big, Frac:32/big, Len:32/big, _:32/big, D:Len/binary, R/binary>>, Acc) ->
+    read_pkts_be(R, [{Ts, Frac, D} | Acc]);
 read_pkts_be(<<>>, Acc) -> lists:reverse(Acc);
 read_pkts_be(_, Acc) -> lists:reverse(Acc).
+
+%% 首尾包时间戳 (秒.微秒), 空文件返回全 0
+pkt_ts_range([]) -> {0, 0, 0, 0};
+pkt_ts_range(Pkts) ->
+    {FS, FF, _} = hd(Pkts),
+    {LS, LF, _} = lists:last(Pkts),
+    {FS, FF, LS, LF}.
+
+%% 时间戳格式化为 "秒.微秒" (微秒补齐 6 位)
+fmt_ts(S, F) -> lists:flatten(io_lib:format("~B.~6..0B", [S, F])).
 
 %%%% Protocol Parsers %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -467,8 +482,9 @@ ip_match(Frame, IP) ->
 %%      组合键用 " -> " 拼接
 %% 兼容: flow = [src_ip, dst_ip], src_ip = [src_ip]
 
-show_summary(Frames, Cfg, LT, Total) ->
-    io:format("link_type: ~B  packets: ~B~n", [LT, Total]),
+show_summary(Frames, Cfg, LT, Total, FSec, FFrac, LSec, LFrac) ->
+    io:format("link_type: ~B  packets: ~B  first_ts: ~s  last_ts: ~s~n",
+              [LT, Total, fmt_ts(FSec, FFrac), fmt_ts(LSec, LFrac)]),
     io:format("== Stats ==~n"),
     Gb = get_in(Cfg, [stats, group_by], stack),
     Groups = group_frames(Frames, Gb),
@@ -476,14 +492,22 @@ show_summary(Frames, Cfg, LT, Total) ->
     Sorted = sort_groups(maps:to_list(Groups), get_in(Cfg, [stats, sort], desc), SortBy),
     Top = get_in(Cfg, [stats, top], 0),
     Result = case Top of 0 -> Sorted; N -> lists:sublist(Sorted, N) end,
-    [io:format("  ~-50s  ~5B pkts  ~s~n", [K, C, fmt_bytes(B)]) || {K, {C, B}} <- Result],
+    %% 键用 string:pad 补齐对齐: 短键保持 50 列对齐, 超长键完整输出不截断
+    BytesFmt = get_in(Cfg, [display, bytes], human),
+    [io:format("  ~s  ~5B pkts  ~s~n", [string:pad(K, 50), C, fmt_bytes(B, BytesFmt)]) || {K, {C, B}} <- Result],
+    print_per_frame(Frames, get_in(Cfg, [display, per_frame], true)).
+
+%% 逐包段控制: true/0=全部 | false=关闭 | 正整数 N=前 N 帧
+print_per_frame(_Frames, false) -> ok;
+print_per_frame([], _PF) -> ok;
+print_per_frame(Frames, PF) ->
+    Indexed = lists:zip(lists:seq(0, length(Frames) - 1), Frames),
+    Shown = case is_integer(PF) andalso PF > 0 of
+        true -> lists:sublist(Indexed, PF);
+        false -> Indexed
+    end,
     io:format("~n== Per-frame ==~n"),
-    case Frames of
-        [] -> ok;
-        _ ->
-            Indexed = lists:zip(lists:seq(0, length(Frames) - 1), Frames),
-            [io:format("  ~4w  ~s~n", [I, frame_summary(F)]) || {I, {_S, F}} <- Indexed]
-    end.
+    [io:format("  ~4w  ~s~n", [I, frame_summary(F)]) || {I, {_S, F}} <- Shown].
 
 %% 统一入口: 将 group_by 规范为字段列表后调用通用分组
 %% stack / protocol 是特殊键，不拆成字段
@@ -531,14 +555,16 @@ inc_stats(Key, Bytes, Map) ->
         {C, B} -> Map#{Key => {C + 1, B + Bytes}}
     end.
 
-fmt_bytes(B) when B >= 1048576 -> lists:flatten(io_lib:format("~.1f MB", [B / 1048576]));
-fmt_bytes(B) when B >= 1024 -> lists:flatten(io_lib:format("~.1f KB", [B / 1024]));
-fmt_bytes(B) -> integer_to_list(B) ++ " B".
+fmt_bytes(B, raw) -> integer_to_list(B) ++ " B";
+fmt_bytes(B, _) when B >= 1048576 -> lists:flatten(io_lib:format("~.1f MB", [B / 1048576]));
+fmt_bytes(B, _) when B >= 1024 -> lists:flatten(io_lib:format("~.1f KB", [B / 1024]));
+fmt_bytes(B, _) -> integer_to_list(B) ++ " B".
 
 %%%% Display %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-show_detail(Frames, Cfg, LT, Total) ->
-    io:format("link_type: ~B  packets: ~B~n", [LT, Total]),
+show_detail(Frames, Cfg, LT, Total, FSec, FFrac, LSec, LFrac) ->
+    io:format("link_type: ~B  packets: ~B  first_ts: ~s  last_ts: ~s~n",
+              [LT, Total, fmt_ts(FSec, FFrac), fmt_ts(LSec, LFrac)]),
     Fields = get_in(Cfg, [display, fields], []),
     case Fields of
         [] ->

@@ -206,6 +206,8 @@ module Packbit
       puts "    fields: [src_ip, dst_ip]  # 紧凑模式字段"
       puts "    payload: true            # 显示载荷"
       puts "    color: false              # 彩色输出"
+      puts "    bytes: human              # human = 14.6 KB | raw = 14912 B 精确整数"
+      puts "    per_frame: true           # summary 逐包段: true/0=全部 | false=关闭 | N=前N帧"
       puts ""
       puts "group_by 取值:"
       puts "  stack         按协议栈分组 (Ethernet/IPv4/TCP... -> "

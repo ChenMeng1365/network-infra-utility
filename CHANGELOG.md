@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `geo-api` 服务端 addr 查询新增互联网兑底源：`--priority` 扩展为 `local,cache,online` 排列（默认 `local,cache,online`，离线环境 `--priority local,cache` 关闭），本地库与 GEO_CACHE 均无结果时自动走互联网兜底（百度 → ip-api.com 链式），响应附加 `"online": true` 标记；新增 `--online-timeout`（默认 8s）；asn 接口兑底直查 ip-api.com（百度无 ASN 数据）。
 - 服务端 addr 查询引入**字段完整性判定**："有网段但无省市"的本地记录（如 `60.188.0.0/15` 仅命中国家）不再视为命中，继续后续源兑底（百度可补齐省市），各源均不完整时返回首个有结果者。
 
+### Fixed
+
+- packbit 统计组合键超 50 字符被 `io:format` 截断的问题：改用 `string:pad` 补齐——短键输出不变（保持 50 列对齐），长键（如 `[src_ip, dst_ip, src_mac, dst_mac]` 组合）完整输出，字段列表分组不再丢失尾部字段。
+
 ### Changed
 
 - `OnlineClient` 重构为双接口链式架构，内部新增 `Provider`（单接口限速 + 熔断器，线程安全）：每接口独立限速（百度 1 QPS / ip-api.com 1.4s 对齐 45 req/min），连续 3 次不可达后 60s 冷却期内直接返回 `unreachable` 不发包不等待；**HTTP 请求在限速锁外执行**（open/read 超时兜底），多线程下发包频率受限但收包互不阻塞，不会阻塞死；`--api` 显式覆盖时进入单接口模式（只查指定接口，跳过百度链），保持原有自定义接口与离线测试行为兼容。

@@ -96,7 +96,13 @@ display:
     - dst_port
   payload: true      # 显示载荷 (detail 模式)
   color: false       # 彩色输出 (false = 纯文本)
+  bytes: human       # 统计流量格式: human (14.6 KB) | raw (14912 B 精确整数)
+  per_frame: true    # summary 模式逐包段: true/0=全部 | false=关闭 | 正整数 N=前 N 帧
 ```
+
+> **机器消费建议**：脚本/管道下游解析时设 `bytes: raw`（避免 KB/MB 舍入损失精度），
+> `per_frame: false`（大文件逐包段可达百万行），组合键超 50 字符不再截断（1.1.1 起
+> 用 `string:pad` 补齐对齐、长键完整输出）。
 
 ## 命令行选项
 
@@ -110,6 +116,16 @@ packbit -f <pcap> [选项]
   -h, --help            显示帮助
   -v, --version         显示版本
 ```
+
+## meta 行
+
+两种模式首行均为元信息，1.1.1 起附带抓包窗口时间戳（秒.微秒，纳秒 pcap 自动归一化为微秒）：
+
+```
+link_type: 1  packets: 450  first_ts: 1789959251.881000  last_ts: 1789959542.134000
+```
+
+`first_ts` / `last_ts` 为首/末包时间戳，可直接用于速率折算，无需二次解析 pcap。
 
 ## 支持的协议
 
@@ -134,3 +150,5 @@ Ethernet II、802.1Q VLAN、IPv4、IPv6、ARP、TCP、UDP、ICMP、ICMPv6。
 # Linux:    apt install erlang / yum install erlang
 # macOS:    brew install erlang
 ```
+
+> AI生成
